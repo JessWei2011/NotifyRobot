@@ -1,0 +1,99 @@
+# 📈 台股盤後籌碼 Telegram 自動推播機器人
+
+專為新手設計的自動化台股盤後籌碼推播工具。每日盤後自動推播兩個時段的三大法人資料：14:50 的**上市大盤法人買賣超金額**，以及 20:30 的上市、上櫃**自選股動態**與**策略強勢股榜單**。
+
+平日 08:00 至 23:59，程式每 10 分鐘檢查一次自選股的重大訊息、注意股票與處置資訊；新公告、處置開始與結束都會個別推送。
+
+---
+
+## 🚀 新手 3 步驟快速上手
+
+### 一鍵執行（Mac）
+
+完成 `.env` 設定後，直接在 Finder 雙擊 `run.command`，即可執行一次正式推播。視窗會保留執行結果；同一交易日已成功推播的報告會自動略過。
+
+首次取得 Telegram Chat ID 時，請先對新 Bot 傳送 `hi`，再雙擊 `setup_telegram.command`。
+
+### 步驟 1：建立 Telegram Bot（約 2 分鐘）
+
+1. 打開 Telegram，在搜尋欄搜尋官方機器人管理員：`@BotFather`。
+2. 傳送指令 `/newbot` 給它。
+3. 依提示依序輸入：
+   - 機器人顯示名稱（如：`MyStockBot`）
+   - 機器人帳號 ID（必須以 `bot` 結尾，如：`jess_stock_alert_bot`）
+4. 建立成功後，`@BotFather` 會給你一串 **HTTP API Token**（格式如：`123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`）。
+
+### 步驟 2：設定 Token 與 Chat ID
+
+1. 複製設定檔：
+   ```bash
+   cp .env.example .env
+   ```
+2. 編輯 `.env` 檔案，填入你的 Token：
+   ```env
+   TELEGRAM_BOT_TOKEN=你的Token
+   ```
+3. 執行連線測試小工具（它會自動幫你抓取你的個人 Chat ID 並發送測試 Hello 訊息）：
+   ```bash
+   python3 test_telegram.py
+   ```
+
+### 步驟 3：測試執行與排程
+
+1. **終端機預覽測試（免發送訊息）**：
+   ```bash
+   python3 main.py --dry-run
+   ```
+2. **正式推播測試**：
+   ```bash
+   python3 main.py
+   ```
+3. **設定 Mac 本機平日自動排程**：
+   ```bash
+   ./setup_cron.sh
+   ```
+   *排程將於平日週一至週五 14:50 推送上市大盤法人金額，20:30 推送上市與上櫃個股報告，並寫入 `bot.log`。*
+
+## ✅ 推播成功與「已收到」確認
+
+- Telegram API 回傳成功與 `message_id` 後，程式才會將報告標記為已推播；暫時性網路錯誤、429 或伺服器錯誤會自動重試。
+- 14:50 大盤訊息顯示上市市場的外資、投信、自營商（含自行買賣與避險）及三大法人合計之淨買賣超金額。
+- 同一交易日的同一份報告預設只發送一次。若需手動重送，使用 `python3 main.py --force`。
+- 每則正式推播預設附有「✅ 已收到」按鈕。點擊後會記錄於 `data/notification_state.sqlite3`。
+- `setup_cron.sh` 同時會加上一個每五分鐘執行的確認同步工作。若不使用 cron，可手動執行 `python3 main.py --check-acks`。
+
+---
+
+## ⚙️ 如何新增或修改自選股？
+
+開啟 `config.json`，直接修改 `watchlist` 陣列即可：
+
+```json
+{
+  "watchlist": [
+    {"code": "2330", "name": "台積電"},
+    {"code": "2317", "name": "鴻海"},
+    {"code": "2454", "name": "聯發科"},
+    {"code": "3008", "name": "大立光"}
+  ],
+  "screener": {
+    "enable_dual_buyers": true,
+    "enable_it_top": true,
+    "top_n": 10,
+    "min_lots": 300
+  }
+}
+```
+
+---
+
+## 📂 專案檔案說明
+
+- `main.py`：主程式入口，支援 `--dry-run` 與 `--date YYYYMMDD`。
+- `test_telegram.py`：Telegram Bot 連線驗證小幫手。
+- `setup_cron.sh`：Mac 定時排程設定腳本。
+- `config.json`：自選股清單與策略開關設定。
+- `.env`：敏感金鑰 (Token / Chat ID) 儲存檔。
+- `src/fetcher.py`：證交所官方開放資料 API 爬蟲。
+- `src/analyzer.py`：籌碼統計、自選比對、土洋同步買超篩選。
+- `src/notifier.py`：Telegram Markdown 訊息美化與發送。

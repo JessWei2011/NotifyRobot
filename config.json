@@ -1,0 +1,23 @@
+{
+  "watchlist": [
+    {"code": "2330", "name": "台積電"},
+    {"code": "3231", "name": "緯創"},
+    {"code": "2454", "name": "聯發科"},
+    {"code": "3324", "name": "雙鴻"}
+  ],
+  "screener": {
+    "enable_dual_buyers": true,
+    "enable_it_top": true,
+    "top_n": 10,
+    "min_lots": 300
+  },
+  "notification": {
+    "send_market_amount_summary": true,
+    "send_event_alerts": true,
+    "send_morning_calendar": true,
+    "send_watchlist": true,
+    "send_screener": true,
+    "enable_ack_button": false,
+    "max_retries": 3
+  }
+}
