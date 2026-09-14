@@ -1,5 +1,6 @@
 .env
 bot.log
+shioaji.log
 data/
 __pycache__/
 src/__pycache__/

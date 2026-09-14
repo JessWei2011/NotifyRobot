@@ -80,7 +80,13 @@ def collect_watchlist_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
             if kind == "major":
                 subject = _value(item, "主旨", "Subject")
                 when = _value(item, "發言日期", "Date") + " " + _value(item, "發言時間", "Time")
-                events.append({"id": _id("major", market, code, when, subject), "text": f"📣 *【自選股重大訊息｜{market}】*\n📌 *{code} {name}*\n🕒 {when.strip()}\n{subject}"})
+                if any(word in subject for word in ("法人說明會", "法說會", "業績發表會")):
+                    title = "法說會公告"
+                elif "自結" in subject:
+                    title = "自結損益公告"
+                else:
+                    title = "自選股重大訊息"
+                events.append({"id": _id("major", market, code, when, subject), "text": f"📣 *【{title}｜{market}】*\n📌 *{code} {name}*\n🕒 {when.strip()}\n{subject}"})
             elif kind == "attention":
                 detail = _value(item, "TradingInfoForAttention", "TradingInformation", "注意交易資訊")
                 date = _value(item, "Date", "公告日期")
@@ -90,19 +96,85 @@ def collect_watchlist_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
                 start, end = _period(period)
                 reason = _value(item, "ReasonsOfDisposition", "DispositionReasons", "處置原因")
                 base = _id("disposal", market, code, start, end)
+                tracking = {
+                    "disposition_id": base,
+                    "market": market,
+                    "code": code,
+                    "name": name,
+                    "start_date": start,
+                    "end_date": end,
+                    "reason": reason,
+                }
                 if start > today:
-                    events.append({"id": base + ":notice", "text": f"🚨 *【即將處置｜{market}】*\n📌 *{code} {name}*\n📅 處置期間：`{start}` ～ `{end}`\n原因：{reason}"})
+                    events.append({"id": base + ":notice", "text": f"🚨 *【即將處置｜{market}】*\n📌 *{code} {name}*\n📅 處置期間：`{start}` ～ `{end}`\n原因：{reason}", **tracking})
                 elif start == today:
-                    events.append({"id": base + ":start", "text": f"🔴 *【處置開始｜{market}】*\n📌 *{code} {name}*\n今日起進入處置，預計至 `{end}`。"})
-                elif start < today <= end:
-                    events.append({"id": base + ":active", "text": f"🔴 *【處置中｜{market}】*\n📌 *{code} {name}*\n📅 處置期間：`{start}` ～ `{end}`\n原因：{reason}"})
+                    events.append({"id": base + ":start", "text": f"🔴 *【處置開始｜{market}】*\n📌 *{code} {name}*\n今日起進入處置，預計至 `{end}`。", **tracking})
+                elif start < today == end:
+                    events.append({"id": base + ":last_day", "text": f"🟠 *【處置結束日｜{market}】*\n📌 *{code} {name}*\n📅 處置將於今日 `{end}` 結束；若無延長，明日恢復正常交易。", **tracking})
     return events
 
 
-def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.date, days: int = 7) -> List[str]:
-    """取得未來指定天數內、已公告的自選股除權息行事。"""
-    end_date = start_date + datetime.timedelta(days=days)
-    items: List[str] = []
+def collect_monthly_revenue_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
+    """讀取官方最新月營收，並為自選股建立一次性公告提醒。"""
+    events: List[Dict[str, str]] = []
+    sources = [
+        ("上市", False, f"{TWSE}/opendata/t187ap05_L"),
+        ("上櫃", True, f"{TPEX}/t187ap05_R"),
+    ]
+    for market, is_tpex, url in sources:
+        for item in _fetch(url, tpex=is_tpex):
+            code = _value(item, "公司代號", "Code", "SecuritiesCompanyCode")
+            if code not in watchlist_codes:
+                continue
+            name = _value(item, "公司名稱", "Name", "CompanyName")
+            month = _value(item, "資料年月")
+            report_date = _value(item, "出表日期")
+            revenue = _value(item, "營業收入-當月營收")
+            mom = _value(item, "營業收入-上月比較增減(%)")
+            yoy = _value(item, "營業收入-去年同月增減(%)")
+            event_id = _id("monthly_revenue", market, code, month, revenue)
+            events.append({
+                "id": event_id,
+                "text": (
+                    f"💰 *【月營收公告｜{market}】*\n"
+                    f"📌 *{code} {name}*\n"
+                    f"📅 資料年月：`{month}`｜公告日：`{report_date}`\n"
+                    f"當月營收：`{revenue}`\n"
+                    f"月增：`{mom}%`｜年增：`{yoy}%`"
+                ),
+            })
+    return events
+
+
+def get_active_disposition_periods(watchlist_codes: Set[str]) -> Dict[str, tuple[str, str]]:
+    """回傳目前處置中的自選股與其期間，供每日個股報告標示使用。"""
+    periods: Dict[str, tuple[str, str]] = {}
+    today = datetime.date.today().isoformat()
+    for _market, is_tpex, url in (
+        ("上市", False, f"{TWSE}/announcement/punish"),
+        ("上櫃", True, f"{TPEX}/tpex_disposal_information"),
+    ):
+        for item in _fetch(url, tpex=is_tpex):
+            code = _value(item, "Code", "SecuritiesCompanyCode", "公司代號")
+            if code not in watchlist_codes:
+                continue
+            start, end = _period(_value(item, "DispositionPeriod", "處置期間"))
+            if start <= today <= end:
+                periods[code] = (start, end)
+    return periods
+
+
+def _has_amount(value: str) -> bool:
+    """判斷官方欄位是否為非零金額或配股比率。"""
+    try:
+        return float(value.replace(",", "")) != 0
+    except (ValueError, AttributeError):
+        return bool(value and value != "0")
+
+
+def _corporate_actions(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
+    """讀取自選股的除權、除息與股利資料。"""
+    actions: List[Dict[str, str]] = []
     sources = [
         ("上市", False, f"{TWSE}/exchangeReport/TWT48U_ALL"),
         ("上櫃", True, f"{TPEX}/tpex_exright_prepost"),
@@ -112,22 +184,70 @@ def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.dat
             code = _value(item, "Code", "SecuritiesCompanyCode")
             if code not in watchlist_codes:
                 continue
-            date_value = _value(item, "Date", "ExRrightsExDividendDate")
-            iso_date = _roc_to_iso(date_value)
-            try:
-                event_date = datetime.date.fromisoformat(iso_date)
-            except ValueError:
-                continue
-            if not start_date <= event_date <= end_date:
-                continue
+            date = _roc_to_iso(_value(item, "Date", "ExRrightsExDividendDate"))
             name = _value(item, "Name", "CompanyName")
-            kind = _value(item, "Exdividend", "ExRrightsExDividend")
-            cash = _value(item, "CashDividend") or "0"
-            stock = _value(item, "StockDividendRatio") or "0"
-            detail = f"現金股利 {cash} 元"
-            if stock not in ("0", "0.00000000"):
-                detail += f"；股票股利 {stock}"
-            items.append(f"📌 `{iso_date}`｜*{code} {name}*（{market}）{kind}：{detail}")
+            cash = _value(item, "CashDividend")
+            stock = _value(item, "StockDividendRatio")
+            labels = []
+            if _has_amount(cash):
+                labels.append("除息／配息")
+            if _has_amount(stock):
+                labels.append("除權")
+            actions.append({
+                "market": market,
+                "code": code,
+                "name": name,
+                "date": date,
+                "label": "／".join(labels) or _value(item, "Exdividend", "ExRrightsExDividend") or "除權／息",
+                "cash": cash,
+                "stock": stock,
+            })
+    return actions
+
+
+def _corporate_action_detail(action: Dict[str, str]) -> str:
+    details = []
+    if _has_amount(action["cash"]):
+        details.append(f"現金股利 `{action['cash']}` 元")
+    if _has_amount(action["stock"]):
+        details.append(f"股票股利 `{action['stock']}`")
+    return "；".join(details) or "詳細條件請以交易所公告為準"
+
+
+def collect_corporate_action_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
+    """回傳今天除權／息的自選股一次性提醒。"""
+    today = datetime.date.today().isoformat()
+    events = []
+    for action in _corporate_actions(watchlist_codes):
+        if action["date"] != today:
+            continue
+        event_id = _id("corporate_action", action["market"], action["code"], action["date"], action["label"])
+        events.append({
+            "id": event_id,
+            "text": (
+                f"🟡 *【今日{action['label']}提醒｜{action['market']}】*\n"
+                f"📌 *{action['code']} {action['name']}*\n"
+                f"📅 日期：`{action['date']}`\n"
+                f"{_corporate_action_detail(action)}"
+            ),
+        })
+    return events
+
+
+def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.date, days: int = 7) -> List[str]:
+    """取得未來指定天數內、已公告的自選股除權息行事。"""
+    end_date = start_date + datetime.timedelta(days=days)
+    items: List[str] = []
+    for action in _corporate_actions(watchlist_codes):
+        try:
+            event_date = datetime.date.fromisoformat(action["date"])
+        except ValueError:
+            continue
+        if start_date <= event_date <= end_date:
+            items.append(
+                f"📌 `{action['date']}`｜*{action['code']} {action['name']}*"
+                f"（{action['market']}）{action['label']}：{_corporate_action_detail(action)}"
+            )
 
     next_month = start_date.replace(day=1) + datetime.timedelta(days=32)
     revenue_deadline = next_month.replace(day=10)
@@ -143,6 +263,6 @@ def format_morning_calendar(start_date: datetime.date, items: List[str]) -> str:
         "──────────────────────",
         *items,
         "──────────────────────",
-        "💡 僅列已公告的自選股除權息與申報期限；日期以公司正式公告為準。",
+        "💡 僅列已公告的自選股除權、除息／配息與申報期限；日期以公司正式公告為準。",
     ]
     return "\n".join(lines)

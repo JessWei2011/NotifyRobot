@@ -45,6 +45,13 @@ def analyze_watchlist(records: List[Dict[str, Any]], watchlist_items: List[Dict[
 
     return results
 
+
+def add_margin_data(items: List[Dict[str, Any]], margin_balances: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """將每日融資餘額附加至自選股結果；無信用交易資料時保持空白。"""
+    for item in items:
+        item.update(margin_balances.get(item["code"], {}))
+    return items
+
 def filter_dual_buyers(records: List[Dict[str, Any]], top_n: int = 10, min_lots: int = 300) -> List[Dict[str, Any]]:
     """
     策略一：外資與投信同步買超 (土洋同步作多)

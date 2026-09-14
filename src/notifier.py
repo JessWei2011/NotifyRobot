@@ -1,4 +1,5 @@
 import logging
+import re
 import requests
 import time
 from dataclasses import dataclass
@@ -12,6 +13,35 @@ class SendResult:
     success: bool
     message_id: Optional[int] = None
     error: Optional[str] = None
+
+
+def send_discord_message(webhook_url: str, text: str, max_retries: int = 3) -> SendResult:
+    """透過 Discord Incoming Webhook 發送卡片式通知。"""
+    if not webhook_url:
+        return SendResult(False, error="missing Discord webhook URL")
+    title = re.sub(r"[*`_]", "", text.splitlines()[0]).strip()[:256] or "NotifyRobot"
+    description = text[len(text.splitlines()[0]):].strip()[:4096] or "通知內容"
+    payload = {
+        "username": "NotifyRobot",
+        "embeds": [{"title": title, "description": description, "color": 0x3B82F6}],
+        "allowed_mentions": {"parse": []},
+    }
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.post(f"{webhook_url}?wait=true", json=payload, timeout=15)
+            if response.ok:
+                body = response.json() if response.content else {}
+                logger.info("Discord 訊息推播成功 (message_id: %s)", body.get("id"))
+                return SendResult(True, message_id=int(body["id"]) if str(body.get("id", "")).isdigit() else None)
+            error, retryable = f"HTTP {response.status_code}: {response.text[:200]}", response.status_code in {429, 500, 502, 503, 504}
+        except requests.RequestException as exc:
+            error, retryable = str(exc), True
+        if retryable and attempt < max_retries:
+            time.sleep(2 ** attempt)
+            continue
+        logger.error("Discord 推播失敗：%s", error)
+        return SendResult(False, error=error)
+    return SendResult(False, error="retry loop exited unexpectedly")
 
 def _format_num(lots: int) -> str:
     """格式化買賣超張數，附帶正負號與顏色指示符號"""
@@ -74,6 +104,8 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
         if item.get("not_found"):
             lines.append(f"📌 *{code} {name}*")
             lines.append("   ⚠️ 當日查無籌碼數據（可能未上市或暫停交易）")
+            if period := item.get("disposition_period"):
+                lines.append(f"   ❗ 處置日期：`{period[0]}` ～ `{period[1]}`")
             lines.append("")
             continue
 
@@ -87,10 +119,46 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
         lines.append(f"   • 投信：{t_str}")
         lines.append(f"   • 自營商：{d_str}")
         lines.append(f"   • 法人合計：*{total_str}*")
+        if "margin_current" in item:
+            change = item["margin_change"]
+            rate = item.get("margin_change_rate")
+            rate_text = "—" if rate is None else f"{rate:+.2f}%"
+            lines.append(f"   • 融資：`{item['margin_current']:,} 張`（{change:+,} 張｜{rate_text}）")
+        if period := item.get("disposition_period"):
+            lines.append(f"   ❗ 處置日期：`{period[0]}` ～ `{period[1]}`")
         lines.append("")
 
     lines.append("──────────────────────")
     lines.append("💡 *提示*：🟢=買超, 🔴=賣超, 單位: 張")
+    return "\n".join(lines)
+
+
+def format_big_holder_message(report_date: str, previous_date: str | None, rows: List[Dict[str, Any]]) -> str:
+    lines = ["🧩 *【自選股大戶籌碼週報】*", f"📅 集保資料日：`{report_date}`"]
+    if previous_date:
+        lines.append(f"比較基準：`{previous_date}`")
+    lines.append("──────────────────────")
+    for item in rows:
+        lines.append(f"📌 *{item['code']} {item['name']}*")
+        change_400 = item["ratio_change_400"]
+        change_1000 = item["ratio_change_1000"]
+        if change_400 is None or change_1000 is None:
+            lines.append(f"   中大戶 `{item['ratio_400']:.1f}%`｜千張大戶 `{item['ratio_1000']:.1f}%`")
+            lines.append("   結論：本週首次建立基準，下週開始比較變化。")
+            continue
+        lines.append(f"   中大戶 `{item['ratio_400']:.1f}%`（{change_400:+.2f}pt）｜千張大戶 `{item['ratio_1000']:.1f}%`（{change_1000:+.2f}pt）")
+        if change_400 > 0.1 and change_1000 > 0.1:
+            conclusion = "中大戶與千張大戶同步集中。"
+        elif change_400 < -0.1 and change_1000 < -0.1:
+            conclusion = "兩層大戶同步鬆動。"
+        elif change_1000 > 0.1 and change_400 <= 0.1:
+            conclusion = "籌碼偏向千張大戶集中。"
+        elif change_400 > 0.1 and change_1000 <= 0.1:
+            conclusion = "中大戶增加，但千張大戶未同步。"
+        else:
+            conclusion = "大戶結構大致持平。"
+        lines.append(f"   結論：{conclusion}")
+    lines.extend(["──────────────────────", "💡 400–999 張與 1,000 張以上依集保持股級距統計；資料每週更新一次。"])
     return "\n".join(lines)
 
 def format_screener_message(

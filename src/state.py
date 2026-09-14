@@ -24,6 +24,20 @@ class NotificationState:
         )
         self.connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS dispositions (
+                disposition_id TEXT PRIMARY KEY,
+                market TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                exit_notified_at TEXT
+            )
+            """
+        )
+        self.connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS event_notifications (
                 event_id TEXT PRIMARY KEY,
                 notified_at TEXT NOT NULL
@@ -95,6 +109,39 @@ class NotificationState:
         self.connection.execute(
             "INSERT OR IGNORE INTO event_notifications (event_id, notified_at) VALUES (?, ?)",
             (event_id, _now()),
+        )
+        self.connection.commit()
+
+    def track_disposition(
+        self, disposition_id: str, market: str, code: str, name: str,
+        start_date: str, end_date: str, reason: str,
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO dispositions (disposition_id, market, code, name, start_date, end_date, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(disposition_id) DO UPDATE SET
+                market=excluded.market, code=excluded.code, name=excluded.name,
+                start_date=excluded.start_date, end_date=excluded.end_date, reason=excluded.reason
+            """,
+            (disposition_id, market, code, name, start_date, end_date, reason),
+        )
+        self.connection.commit()
+
+    def pending_disposition_exits(self, today: str):
+        return self.connection.execute(
+            """
+            SELECT disposition_id, market, code, name, start_date, end_date, reason
+            FROM dispositions
+            WHERE end_date < ? AND exit_notified_at IS NULL
+            """,
+            (today,),
+        ).fetchall()
+
+    def record_disposition_exit(self, disposition_id: str) -> None:
+        self.connection.execute(
+            "UPDATE dispositions SET exit_notified_at = ? WHERE disposition_id = ?",
+            (_now(), disposition_id),
         )
         self.connection.commit()
 

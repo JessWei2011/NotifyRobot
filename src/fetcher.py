@@ -230,3 +230,35 @@ def get_latest_institutional_data(target_date: Optional[str] = None) -> Tuple[st
         time.sleep(0.5)
 
     raise RuntimeError("無法獲取最近一週之三大法人籌碼資料，請稍後再試。")
+
+
+def get_margin_balances(date_str: str) -> Dict[str, Dict[str, Any]]:
+    """取得上市、上櫃個股融資前／今餘額與當日增減率。"""
+    balances: Dict[str, Dict[str, Any]] = {}
+    try:
+        url = f"https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date={date_str}&selectType=ALL&response=json"
+        tables = requests.get(url, timeout=20).json().get("tables", [])
+        table = next((table for table in tables if len(table.get("fields", [])) >= 7 and table["fields"][0] == "代號"), {})
+        for row in table.get("data", []):
+            if len(row) < 7:
+                continue
+            previous, current = _clean_int(row[5]), _clean_int(row[6])
+            balances[str(row[0]).strip()] = {"margin_previous": previous, "margin_current": current}
+    except Exception as exc:
+        logger.warning("抓取上市融資資料失敗 (%s): %s", date_str, exc)
+    try:
+        date = datetime.datetime.strptime(date_str, "%Y%m%d").date()
+        roc = f"{date.year - 1911:03d}/{date.month:02d}/{date.day:02d}"
+        url = "https://www.tpex.org.tw/web/stock/margin_trading/margin_balance/margin_bal_result.php"
+        payload = requests.get(url, params={"l": "zh-tw", "o": "json", "s": "0", "d": roc}, timeout=20, verify=certifi.where()).json()
+        tables = payload.get("tables", [])
+        for row in (tables[0].get("data", []) if tables else []):
+            if len(row) >= 7:
+                balances[str(row[0]).strip()] = {"margin_previous": _clean_int(row[2]), "margin_current": _clean_int(row[6])}
+    except Exception as exc:
+        logger.warning("抓取上櫃融資資料失敗 (%s): %s", date_str, exc)
+    for values in balances.values():
+        previous, current = values["margin_previous"], values["margin_current"]
+        values["margin_change"] = current - previous
+        values["margin_change_rate"] = (current - previous) / previous * 100 if previous else None
+    return balances

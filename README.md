@@ -4,6 +4,14 @@
 
 平日 08:00 至 23:59，程式每 10 分鐘檢查一次自選股的重大訊息、注意股票與處置資訊；新公告、處置開始與結束都會個別推送。
 
+每週六 09:30 另推送一次集保大戶籌碼週報：400–999 張與 1,000 張以上的持股比例、戶數與週變化。每日 20:30 的自選股報告則會附上當日融資餘額、增減張數及增減率。
+
+若在 `.env` 設定 `DISCORD_WEBHOOK_URL`，上述通知會同步發送至指定 Discord 頻道。可用 `python3 main.py --test-discord` 只發送 Discord 連線測試。
+
+若要自動同步永豐 Shioaji 的非 ETF 持股，請在 NotifyRobot 的 `.env` 設定 `SJ_ENV_FILE` 指向已驗證可用的 Shioaji `.env`。程式只讀取持股，不會啟用憑證或下單；指定的憑證檔優先於 NotifyRobot 內舊的 Shioaji 變數。
+
+若要確認遠端電腦與排程正常運作，可另外建立 Discord 頻道並設定 `DISCORD_HEARTBEAT_WEBHOOK_URL`。執行 `python3 main.py --heartbeat-discord` 會在該頻道發送主機名稱與目前時間；`setup_cron.sh` 會將它排在每小時整點執行。可在 `config.json` 的 `discord_heartbeat.message` 自訂內容，並以 `{hostname}`、`{time}` 與 `{quote}` 插入主機名稱、發送時間與隨機金句；金句清單由 `discord_heartbeat.quotes` 管理。將 `discord_heartbeat.enabled` 改為 `false` 即可暫停心跳。
+
 ---
 
 ## 🚀 新手 3 步驟快速上手
@@ -52,7 +60,7 @@
    ```bash
    ./setup_cron.sh
    ```
-   *排程將於平日週一至週五 14:50 推送上市大盤法人金額，20:30 推送上市與上櫃個股報告，並寫入 `bot.log`。*
+   *排程將於平日週一至週五 14:50 推送上市大盤法人金額，20:30 推送上市與上櫃個股報告；每天 09:00 另發送 Discord 主機心跳，並寫入 `bot.log`。*
 
 ## ✅ 推播成功與「已收到」確認
 
@@ -65,6 +73,8 @@
 ---
 
 ## ⚙️ 如何新增或修改自選股？
+
+最簡單的方式是在 Finder 雙擊 `config_ui.command`。瀏覽器會開啟本機設定頁，可新增、刪除與修改通知個股；按「儲存通知清單」後，下次推播便會套用。此清單會與未來自動同步的永豐非 ETF 持股合併。
 
 開啟 `config.json`，直接修改 `watchlist` 陣列即可：
 

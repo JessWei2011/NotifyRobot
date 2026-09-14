@@ -1,10 +1,18 @@
 {
   "watchlist": [
-    {"code": "2330", "name": "台積電"},
-    {"code": "3231", "name": "緯創"},
-    {"code": "2454", "name": "聯發科"},
-    {"code": "3324", "name": "雙鴻"}
+    {
+      "code": "1815",
+      "name": "富喬"
+    }
   ],
+  "holdings": {
+    "source": "shioaji",
+    "fallback_to_config": true
+  },
+  "channels": {
+    "telegram_enabled": false,
+    "discord_enabled": true
+  },
   "screener": {
     "enable_dual_buyers": true,
     "enable_it_top": true,
@@ -15,9 +23,28 @@
     "send_market_amount_summary": true,
     "send_event_alerts": true,
     "send_morning_calendar": true,
+    "send_big_holder_report": true,
+    "send_daily_margin": true,
     "send_watchlist": true,
     "send_screener": true,
     "enable_ack_button": false,
-    "max_retries": 3
+    "max_retries": 3,
+    "send_discord_heartbeat": true
+  },
+  "discord_heartbeat": {
+    "enabled": true,
+    "message": "💓 *【NotifyRobot 主機心跳】*\n\n(1) 時間：`{time}`\n\n(2) 排程：\n• 大盤法人金額（平日 14:50）\n• 個股籌碼與策略（平日 20:30）\n• 開盤前行事曆（平日 08:30）\n• 個股重大訊息檢查（平日 08:00–23:59，每 10 分鐘）\n• 集保大戶週報（週六 09:30）\n\n(3) 金句：{quote}",
+    "quotes": [
+      "穩健累積，時間會放大你的成果。",
+      "心定則路清，步穩則財聚。",
+      "每一次自律，都是替未來存款。",
+      "機會偏愛有準備且耐心的人。",
+      "做對小事，財富自然慢慢靠近。",
+      "先守住本金，再等待好機會。",
+      "積少成多，聚沙成塔。",
+      "行穩致遠，厚積薄發。",
+      "心懷感恩，福氣自來。",
+      "千里之行，始於足下。"
+    ]
   }
 }

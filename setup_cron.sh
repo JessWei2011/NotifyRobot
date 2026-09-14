@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Mac 本機 Crontab 排程設定小幫手
-# 用途：設定平日 14:50 大盤法人金額、20:30 個股報告及每 10 分鐘事件警示
+# 用途：設定台股通知、事件警示，以及每日 Discord 主機心跳
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,6 +11,8 @@ MARKET_CRON_JOB="50 14 * * 1-5 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.p
 STOCK_CRON_JOB="30 20 * * 1-5 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py >> $LOG_FILE 2>&1"
 EVENT_CRON_JOB="*/10 8-23 * * 1-5 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --check-events >> $LOG_FILE 2>&1"
 CALENDAR_CRON_JOB="30 8 * * 1-5 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --morning-calendar >> $LOG_FILE 2>&1"
+BIG_HOLDER_CRON_JOB="30 9 * * 6 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --big-holder-report >> $LOG_FILE 2>&1"
+HEARTBEAT_CRON_JOB="0 * * * * cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --heartbeat-discord >> $LOG_FILE 2>&1"
 PROJECT_MARKER="$SCRIPT_DIR/main.py"
 
 echo "=================================================="
@@ -21,6 +23,8 @@ echo "Python 路徑: $PYTHON_EXEC"
 echo "排程時間: 平日 14:50 大盤法人、20:30 個股報告"
 echo "自選股事件警示: 平日 08:00~23:59 每 10 分鐘"
 echo "開盤前行事曆: 平日 08:30"
+echo "大戶籌碼週報: 每週六 09:30"
+echo "Discord 主機心跳: 每小時整點"
 echo "日誌輸出: $LOG_FILE"
 echo "=================================================="
 
@@ -42,7 +46,7 @@ if [ $? -eq 0 ]; then
 fi
 
 # 新增排程
-(crontab -l 2>/dev/null; echo "$MARKET_CRON_JOB"; echo "$STOCK_CRON_JOB"; echo "$EVENT_CRON_JOB"; echo "$CALENDAR_CRON_JOB") | crontab -
+(crontab -l 2>/dev/null; echo "$MARKET_CRON_JOB"; echo "$STOCK_CRON_JOB"; echo "$EVENT_CRON_JOB"; echo "$CALENDAR_CRON_JOB"; echo "$BIG_HOLDER_CRON_JOB"; echo "$HEARTBEAT_CRON_JOB") | crontab -
 
 echo "🎉 排程設定完成！已新增以下定時任務至你的 Mac："
 crontab -l | grep -F "$PROJECT_MARKER"
