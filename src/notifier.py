@@ -19,10 +19,10 @@ class SendResult:
 
 
 def _highlight_discord_stock_headers(description: str) -> str:
-    """用 Discord ANSI 區塊將股號與股名和說明內容分離。"""
+    """用 Discord 穩定支援的彩色符號與粗體分隔個股標頭。"""
     def replace(match: re.Match[str]) -> str:
         stock = match.group("stock")
-        return f"{match.group('prefix')}```ansi\n\u001b[1;36m{stock}\u001b[0m\n```"
+        return f"{match.group('prefix')}🔷 **{stock}**"
 
     return DISCORD_STOCK_HEADER_PATTERN.sub(replace, description)
 
