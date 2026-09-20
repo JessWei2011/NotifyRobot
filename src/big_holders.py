@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ import urllib3
 
 
 TDCC_URL = "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5"
+TDCC_ARCHIVE_URL = "https://raw.githubusercontent.com/wirelessr/tdcc-opendata-archive/main/snapshots/{year}/{date}.csv"
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
@@ -23,14 +25,9 @@ def _number(value: object) -> float:
         return 0.0
 
 
-def fetch_big_holder_snapshot(codes: set[str] | None = None) -> tuple[str, dict[str, dict[str, Any]]]:
-    """取得集保最新週資料；400~999 張為級距 11~13，千張以上為級距 14。
-
-    ``codes`` 為 ``None`` 時保留全市場資料，用於建立每週 Top 10 比較基準。
-    """
-    response = requests.get(TDCC_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=45, verify=False)
-    response.raise_for_status()
-    rows = csv.DictReader(io.StringIO(response.text.lstrip("\ufeff")))
+def _parse_big_holder_snapshot(text: str, codes: set[str] | None = None) -> tuple[str, dict[str, dict[str, Any]]]:
+    """將集保 CSV 轉為 400~999 張及千張以上兩組快照。"""
+    rows = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
     result: dict[str, dict[str, Any]] = {}
     report_date = ""
     for row in rows:
@@ -64,6 +61,33 @@ def fetch_big_holder_snapshot(codes: set[str] | None = None) -> tuple[str, dict[
     if not report_date:
         raise RuntimeError("集保資料未包含指定自選股，無法建立大戶快照")
     return report_date, result
+
+
+def fetch_big_holder_snapshot(codes: set[str] | None = None) -> tuple[str, dict[str, dict[str, Any]]]:
+    """取得集保最新週資料；``codes=None`` 時保留全市場資料。"""
+    response = requests.get(TDCC_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=45, verify=False)
+    response.raise_for_status()
+    return _parse_big_holder_snapshot(response.text, codes)
+
+
+def fetch_previous_market_snapshot(report_date: str) -> tuple[str, dict[str, dict[str, Any]]]:
+    """由每週原始 CSV 封存回補上一個可用集保資料日（最多往前兩週）。"""
+    try:
+        latest = datetime.strptime(report_date, "%Y%m%d").date()
+    except ValueError as exc:
+        raise RuntimeError(f"集保資料日期格式錯誤：{report_date}") from exc
+
+    for days_back in range(1, 15):
+        candidate = latest - timedelta(days=days_back)
+        url = TDCC_ARCHIVE_URL.format(year=candidate.year, date=candidate.isoformat())
+        response = requests.get(url, headers={"User-Agent": "NotifyRobot/1.0"}, timeout=45)
+        if response.status_code == 404:
+            continue
+        response.raise_for_status()
+        archived_date, snapshot = _parse_big_holder_snapshot(response.text)
+        if archived_date < report_date:
+            return archived_date, snapshot
+    raise RuntimeError(f"找不到 {report_date} 前一週的集保全市場快照")
 
 
 def load_previous_snapshot(path: Path) -> dict[str, Any] | None:
@@ -116,6 +140,9 @@ def build_big_holder_rankings(
     for group in ("400", "1000"):
         changes: list[dict[str, Any]] = []
         for code, stock in current.items():
+            # 全市場排行維持「個股」範圍，排除 ETF、權證、債券與其他非普通股商品。
+            if not (code.isdigit() and len(code) == 4):
+                continue
             old = previous_stocks.get(code)
             if old is None:
                 continue

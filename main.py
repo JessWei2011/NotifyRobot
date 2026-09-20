@@ -59,6 +59,7 @@ from src.big_holders import (
     build_big_holder_rankings,
     build_big_holder_rows,
     fetch_big_holder_snapshot,
+    fetch_previous_market_snapshot,
     load_previous_snapshot,
     save_snapshot,
 )
@@ -270,6 +271,12 @@ def main():
         market_snapshot_path = BASE_DIR / "data" / "market_big_holder_snapshot.json"
         previous = load_previous_snapshot(snapshot_path)
         previous_market = load_previous_snapshot(market_snapshot_path)
+        if not previous_market or previous_market.get("date") >= report_date:
+            previous_date, previous_stocks = fetch_previous_market_snapshot(report_date)
+            previous_market = {"date": previous_date, "stocks": previous_stocks}
+        if "market_names" in locals():
+            for code, stock in market_snapshot.items():
+                stock["name"] = market_names.get(code, stock.get("name", code))
         rows = build_big_holder_rows(watchlist, snapshot, previous)
         rankings = build_big_holder_rankings(market_snapshot, previous_market)
         message = format_big_holder_message(report_date, previous.get("date") if previous else None, rows, rankings)
