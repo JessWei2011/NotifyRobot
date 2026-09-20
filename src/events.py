@@ -59,6 +59,16 @@ def _period(value: str) -> tuple[str, str]:
     return (_roc_to_iso(parts[0]), _roc_to_iso(parts[-1])) if len(parts) == 2 else (value, value)
 
 
+def _is_within_recent_calendar_days(value: str, days: int = 2) -> bool:
+    """判斷公告日期是否落在今天起往回的指定日曆日範圍內。"""
+    try:
+        announcement_date = datetime.date.fromisoformat(_roc_to_iso(value))
+    except ValueError:
+        return False
+    age = (datetime.date.today() - announcement_date).days
+    return 0 <= age < days
+
+
 def collect_watchlist_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
     """讀取官方資料並回傳自選股的新公告、注意與處置事件。"""
     events: List[Dict[str, str]] = []
@@ -79,7 +89,10 @@ def collect_watchlist_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
             name = _value(item, "Name", "CompanyName", "公司名稱")
             if kind == "major":
                 subject = _value(item, "主旨", "Subject")
-                when = _value(item, "發言日期", "Date") + " " + _value(item, "發言時間", "Time")
+                announcement_date = _value(item, "發言日期", "Date")
+                if not _is_within_recent_calendar_days(announcement_date):
+                    continue
+                when = announcement_date + " " + _value(item, "發言時間", "Time")
                 if any(word in subject for word in ("法人說明會", "法說會", "業績發表會")):
                     title = "法說會公告"
                 elif "自結" in subject:
