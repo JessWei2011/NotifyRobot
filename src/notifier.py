@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 DISCORD_STOCK_HEADER_PATTERN = re.compile(
-    r"(?m)^(?P<prefix>(?:📌|\d+\.)\s*)\*(?P<stock>[0-9A-Za-z]{4,6}\s+[^*\n]+)\*"
+    r"(?m)^(?P<prefix>(?:(?:📌|\d+\.)\s*)?)\*(?P<stock>[0-9A-Za-z]{4,6}\s+[^*\n]+)\*"
 )
 
 
@@ -114,7 +114,7 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
         code = item["code"]
         name = item["name"]
         if item.get("not_found"):
-            lines.append(f"📌 *{code} {name}*")
+            lines.append(f"*{code} {name}*")
             lines.append("   ⚠️ 當日查無籌碼數據（可能未上市或暫停交易）")
             if period := item.get("disposition_period"):
                 lines.append(f"   ❗ 處置日期：`{period[0]}` ～ `{period[1]}`")
@@ -126,7 +126,7 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
         d_str = _format_num(item["dealer_lots"])
         total_str = _format_num(item["total_lots"])
 
-        lines.append(f"📌 *{code} {name}*")
+        lines.append(f"*{code} {name}*")
         lines.append(f"   • 外資：{f_str}")
         lines.append(f"   • 投信：{t_str}")
         lines.append(f"   • 自營商：{d_str}")
@@ -140,8 +140,6 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
             lines.append(f"   ❗ 處置日期：`{period[0]}` ～ `{period[1]}`")
         lines.append("")
 
-    lines.append("──────────────────────")
-    lines.append("💡 *提示*：🟢=買超, 🔴=賣超, 單位: 張")
     return "\n".join(lines)
 
 
