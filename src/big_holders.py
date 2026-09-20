@@ -26,7 +26,10 @@ def _number(value: object) -> float:
 
 
 def _parse_big_holder_snapshot(text: str, codes: set[str] | None = None) -> tuple[str, dict[str, dict[str, Any]]]:
-    """將集保 CSV 轉為 400~999 張及千張以上兩組快照。"""
+    """將集保 CSV 轉為 400 張以上及千張以上兩組快照。
+
+    集保持股分級：12~14 為 400~999 張、15 為 1,000 張以上；16 為差異調整、17 為合計，均不可納入。
+    """
     rows = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
     result: dict[str, dict[str, Any]] = {}
     report_date = ""
@@ -36,7 +39,7 @@ def _parse_big_holder_snapshot(text: str, codes: set[str] | None = None) -> tupl
             continue
         report_date = str(row.get("資料日期", "")).strip() or report_date
         level = int(_number(row.get("持股分級")))
-        if level not in {11, 12, 13, 14}:
+        if level not in {12, 13, 14, 15}:
             continue
         stock = result.setdefault(
             code,
@@ -50,11 +53,11 @@ def _parse_big_holder_snapshot(text: str, codes: set[str] | None = None) -> tupl
                 "ratio_1000": 0.0,
             },
         )
-        if level in {11, 12, 13}:
+        if level in {12, 13, 14, 15}:
             stock["holders_400"] += int(_number(row.get("人數")))
             stock["shares_400"] += int(_number(row.get("股數")))
             stock["ratio_400"] += _number(row.get("占集保庫存數比例%"))
-        else:
+        if level == 15:
             stock["holders_1000"] += int(_number(row.get("人數")))
             stock["shares_1000"] += int(_number(row.get("股數")))
             stock["ratio_1000"] += _number(row.get("占集保庫存數比例%"))

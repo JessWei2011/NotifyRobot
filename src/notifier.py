@@ -158,18 +158,18 @@ def format_big_holder_message(
         change_400 = item["ratio_change_400"]
         change_1000 = item["ratio_change_1000"]
         if change_400 is None or change_1000 is None:
-            lines.append(f"   中大戶 `{item['ratio_400']:.1f}%`｜千張大戶 `{item['ratio_1000']:.1f}%`")
+            lines.append(f"   400 張以上大戶 `{item['ratio_400']:.1f}%`｜千張大戶 `{item['ratio_1000']:.1f}%`")
             lines.append("   💡 結論：本週首次建立基準，下週開始比較變化。")
             continue
-        lines.append(f"   中大戶 `{item['ratio_400']:.1f}%`（{change_400:+.2f}pt）｜千張大戶 `{item['ratio_1000']:.1f}%`（{change_1000:+.2f}pt）")
+        lines.append(f"   400 張以上大戶 `{item['ratio_400']:.1f}%`（{change_400:+.2f}pt）｜千張大戶 `{item['ratio_1000']:.1f}%`（{change_1000:+.2f}pt）")
         if change_400 > 0.1 and change_1000 > 0.1:
-            conclusion = "中大戶與千張大戶同步集中。"
+            conclusion = "400 張以上與千張大戶同步集中。"
         elif change_400 < -0.1 and change_1000 < -0.1:
             conclusion = "兩層大戶同步鬆動。"
         elif change_1000 > 0.1 and change_400 <= 0.1:
             conclusion = "籌碼偏向千張大戶集中。"
         elif change_400 > 0.1 and change_1000 <= 0.1:
-            conclusion = "中大戶增加，但千張大戶未同步。"
+            conclusion = "400 張以上大戶增加，但千張大戶未同步。"
         else:
             conclusion = "大戶結構大致持平。"
         lines.append(f"   💡 結論：{conclusion}")
@@ -179,7 +179,7 @@ def format_big_holder_message(
             "📊 全市場 Top 10：本週已建立比較基準，下週起依持股比例增加幅度排行。",
         ])
     else:
-        for group, label in (("400", "400–999 張大戶"), ("1000", "千張大戶")):
+        for group, label in (("400", "400 張以上大戶"), ("1000", "千張大戶")):
             lines.extend(["──────────────────────", f"📈 *【本週{label}持股比例增加 Top 10】*"])
             entries = rankings.get(group, [])
             if not entries:
@@ -190,7 +190,7 @@ def format_big_holder_message(
                     f"{index}. 🔷 **{entry['code']} {entry['name']}**｜"
                     f"`{entry['ratio']:.1f}%`（{entry['change']:+.2f}pt）"
                 )
-    lines.extend(["──────────────────────", "💡 400–999 張與 1,000 張以上依集保持股級距統計；資料每週更新一次。"])
+    lines.extend(["──────────────────────", "💡 400 張以上含 400–999 張與千張大戶；資料每週更新一次。"])
     return "\n".join(lines)
 
 def format_screener_message(
