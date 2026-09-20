@@ -130,7 +130,10 @@ def build_big_holder_rows(
 
 
 def build_big_holder_rankings(
-    current: dict[str, dict[str, Any]], previous: dict[str, Any] | None, limit: int = 10
+    current: dict[str, dict[str, Any]],
+    previous: dict[str, Any] | None,
+    limit: int = 10,
+    allowed_codes: set[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]] | None:
     """依本週持股比例增幅，產生 400~999 張及千張大戶全市場排行。"""
     previous_stocks = (previous or {}).get("stocks", {})
@@ -143,6 +146,8 @@ def build_big_holder_rankings(
         for code, stock in current.items():
             # 全市場排行維持「個股」範圍，排除 ETF、權證、債券與其他非普通股商品。
             if not (code.isdigit() and len(code) == 4):
+                continue
+            if allowed_codes is not None and code not in allowed_codes:
                 continue
             old = previous_stocks.get(code)
             if old is None:

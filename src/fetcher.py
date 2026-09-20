@@ -233,11 +233,10 @@ def get_latest_institutional_data(target_date: Optional[str] = None) -> Tuple[st
 
 
 def fetch_company_name_map() -> Dict[str, str]:
-    """以交易所公開基本資料補齊上市、上櫃與興櫃股票的中文簡稱。"""
+    """以交易所公開基本資料取得上市、上櫃股票的中文簡稱。"""
     sources = (
         ("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", "公司代號", "公司簡稱"),
         ("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O", "SecuritiesCompanyCode", "CompanyAbbreviation"),
-        ("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_R", "SecuritiesCompanyCode", "CompanyAbbreviation"),
     )
     names: Dict[str, str] = {}
     for url, code_field, name_field in sources:

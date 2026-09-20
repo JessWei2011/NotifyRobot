@@ -259,13 +259,17 @@ def main():
         except Exception as exc:
             logger.warning("無法以盤後資料補齊大戶週報名稱，沿用既有名稱：%s", exc)
         try:
-            market_names.update(fetch_company_name_map())
+            listed_otc_names = fetch_company_name_map()
+            market_names.update(listed_otc_names)
         except Exception as exc:
             logger.warning("無法以交易所基本資料補齊大戶週報名稱：%s", exc)
+            return 1
         watchlist = [
             {**item, "name": market_names.get(str(item.get("code", "")).strip(), item.get("name", ""))}
             for item in watchlist
+            if str(item.get("code", "")).strip() in listed_otc_names
         ]
+        codes = {str(item.get("code", "")).strip() for item in watchlist}
         try:
             report_date, snapshot = fetch_big_holder_snapshot(codes)
             _, market_snapshot = fetch_big_holder_snapshot()
@@ -295,7 +299,7 @@ def main():
         for code, stock in market_snapshot.items():
             stock["name"] = market_names.get(code, stock.get("name", code))
         rows = build_big_holder_rows(watchlist, snapshot, previous)
-        rankings = build_big_holder_rankings(market_snapshot, previous_market)
+        rankings = build_big_holder_rankings(market_snapshot, previous_market, allowed_codes=set(listed_otc_names))
         message = format_big_holder_message(report_date, previous.get("date") if previous else None, rows, rankings)
         if args.dry_run:
             print(message)
