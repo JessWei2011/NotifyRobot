@@ -149,7 +149,7 @@ def format_big_holder_message(report_date: str, previous_date: str | None, rows:
         lines.append(f"比較基準：`{previous_date}`")
     lines.append("──────────────────────")
     for item in rows:
-        lines.append(f"📌 *{item['code']} {item['name']}*")
+        lines.append(f"**{item['code']} {item['name']}**")
         change_400 = item["ratio_change_400"]
         change_1000 = item["ratio_change_1000"]
         if change_400 is None or change_1000 is None:

@@ -244,6 +244,16 @@ def main():
             return 0
         watchlist = get_watchlist(config)
         codes = {str(item.get("code", "")).strip() for item in watchlist}
+        # Shioaji 合約偶爾只回傳代號；以交易所盤後資料補齊週報顯示名稱。
+        try:
+            _, market_records = get_latest_institutional_data()
+            market_names = {str(row["code"]).strip(): str(row["name"]).strip() for row in market_records}
+            watchlist = [
+                {**item, "name": market_names.get(str(item.get("code", "")).strip(), item.get("name", ""))}
+                for item in watchlist
+            ]
+        except Exception as exc:
+            logger.warning("無法以盤後資料補齊大戶週報名稱，沿用既有名稱：%s", exc)
         try:
             report_date, snapshot = fetch_big_holder_snapshot(codes)
         except Exception as exc:
