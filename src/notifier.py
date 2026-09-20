@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+DISCORD_STOCK_HEADER_PATTERN = re.compile(
+    r"(?m)^(?P<prefix>(?:📌|\d+\.)\s*)\*(?P<stock>[0-9A-Za-z]{4,6}\s+[^*\n]+)\*"
+)
 
 
 @dataclass
@@ -15,12 +18,21 @@ class SendResult:
     error: Optional[str] = None
 
 
+def _highlight_discord_stock_headers(description: str) -> str:
+    """用 Discord ANSI 區塊將股號與股名和說明內容分離。"""
+    def replace(match: re.Match[str]) -> str:
+        stock = match.group("stock")
+        return f"{match.group('prefix')}```ansi\n\u001b[1;36m{stock}\u001b[0m\n```"
+
+    return DISCORD_STOCK_HEADER_PATTERN.sub(replace, description)
+
+
 def send_discord_message(webhook_url: str, text: str, max_retries: int = 3) -> SendResult:
     """透過 Discord Incoming Webhook 發送卡片式通知。"""
     if not webhook_url:
         return SendResult(False, error="missing Discord webhook URL")
     title = re.sub(r"[*`_]", "", text.splitlines()[0]).strip()[:256] or "NotifyRobot"
-    description = text[len(text.splitlines()[0]):].strip()[:4096] or "通知內容"
+    description = _highlight_discord_stock_headers(text[len(text.splitlines()[0]):].strip())[:4096] or "通知內容"
     payload = {
         "username": "NotifyRobot",
         "embeds": [{"title": title, "description": description, "color": 0x3B82F6}],
