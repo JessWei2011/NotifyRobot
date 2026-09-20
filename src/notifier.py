@@ -159,8 +159,8 @@ def format_big_holder_message(
         change_1000 = item["ratio_change_1000"]
         if change_400 is None or change_1000 is None:
             lines.append(f"   400 張以上大戶 `{item['ratio_400']:.1f}%`｜千張大戶 `{item['ratio_1000']:.1f}%`")
-            lines.append("")
             lines.append("   💡 結論：本週首次建立基準，下週開始比較變化。")
+            lines.append("")
             continue
         lines.append(f"   400 張以上大戶 `{item['ratio_400']:.1f}%`（{change_400:+.2f}pt）｜千張大戶 `{item['ratio_1000']:.1f}%`（{change_1000:+.2f}pt）")
         if change_400 > 0.1 and change_1000 > 0.1:
@@ -173,8 +173,8 @@ def format_big_holder_message(
             conclusion = "400 張以上大戶增加，但千張大戶未同步。"
         else:
             conclusion = "大戶結構大致持平。"
-        lines.append("")
         lines.append(f"   💡 結論：{conclusion}")
+        lines.append("")
     if rankings is None:
         lines.extend([
             "──────────────────────",
