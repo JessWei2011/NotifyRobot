@@ -182,23 +182,23 @@ def fetch_twse_market_institutional_amounts(date_str: str) -> Optional[Dict[str,
 
 
 def get_latest_market_institutional_amounts(target_date: Optional[str] = None) -> Tuple[str, Dict[str, int]]:
-    """取得指定或最近交易日的上市大盤三大法人買賣超金額。"""
+    """取得指定日或今天的上市大盤三大法人買賣超金額。
+
+    未指定日期時絕不回退至前一交易日，避免即時通知誤發舊資料。
+    """
     if target_date:
         summary = fetch_twse_market_institutional_amounts(target_date)
         if summary is None:
             raise ValueError(f"指定日期 {target_date} 查無上市大盤三大法人金額資料")
         return target_date, summary
     today = datetime.date.today()
-    for days_back in range(7):
-        candidate = today - datetime.timedelta(days=days_back)
-        if candidate.weekday() >= 5:
-            continue
-        date_str = candidate.strftime("%Y%m%d")
-        summary = fetch_twse_market_institutional_amounts(date_str)
-        if summary is not None:
-            return date_str, summary
-        time.sleep(0.5)
-    raise RuntimeError("無法獲取最近一週的上市大盤三大法人金額資料")
+    if today.weekday() >= 5:
+        raise RuntimeError("今天不是交易日，不發送上市大盤法人金額")
+    date_str = today.strftime("%Y%m%d")
+    summary = fetch_twse_market_institutional_amounts(date_str)
+    if summary is None:
+        raise RuntimeError(f"當日上市大盤法人金額尚未公布（{date_str}），本次不發送")
+    return date_str, summary
 
 def get_latest_institutional_data(target_date: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]:
     """
