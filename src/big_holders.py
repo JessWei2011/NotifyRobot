@@ -119,7 +119,8 @@ def build_big_holder_rows(
             continue
         stock = current[code]
         old = previous_stocks.get(code)
-        row = {"code": code, "name": item.get("name", code), **stock}
+        # 快照只用於數值比較；名稱應以 config／永豐等較可靠的自選股來源為準。
+        row = {**stock, "code": code, "name": item.get("name", code)}
         for group in ("400", "1000"):
             row[f"lots_{group}"] = round(stock[f"shares_{group}"] / 1000)
             row[f"ratio_change_{group}"] = None if old is None else stock[f"ratio_{group}"] - _number(old.get(f"ratio_{group}"))

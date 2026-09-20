@@ -40,7 +40,7 @@ def load_simple_env(env_path: Path):
 load_simple_env(BASE_DIR / ".env")
 
 # 引入內部模組
-from src.fetcher import get_latest_institutional_data, get_latest_market_institutional_amounts, get_margin_balances
+from src.fetcher import fetch_company_name_map, get_latest_institutional_data, get_latest_market_institutional_amounts, get_margin_balances
 from src.analyzer import add_margin_data, analyze_watchlist, filter_dual_buyers, filter_it_top_buyers
 from src.notifier import (
     answer_callback_query,
@@ -251,16 +251,21 @@ def main():
             return 0
         watchlist = get_watchlist(config)
         codes = {str(item.get("code", "")).strip() for item in watchlist}
-        # Shioaji 合約偶爾只回傳代號；以交易所盤後資料補齊週報顯示名稱。
+        # Shioaji 合約偶爾只回傳代號；盤後資料及交易所基本資料雙重補齊週報名稱。
+        market_names = {}
         try:
             _, market_records = get_latest_institutional_data()
-            market_names = {str(row["code"]).strip(): str(row["name"]).strip() for row in market_records}
-            watchlist = [
-                {**item, "name": market_names.get(str(item.get("code", "")).strip(), item.get("name", ""))}
-                for item in watchlist
-            ]
+            market_names.update({str(row["code"]).strip(): str(row["name"]).strip() for row in market_records})
         except Exception as exc:
             logger.warning("無法以盤後資料補齊大戶週報名稱，沿用既有名稱：%s", exc)
+        try:
+            market_names.update(fetch_company_name_map())
+        except Exception as exc:
+            logger.warning("無法以交易所基本資料補齊大戶週報名稱：%s", exc)
+        watchlist = [
+            {**item, "name": market_names.get(str(item.get("code", "")).strip(), item.get("name", ""))}
+            for item in watchlist
+        ]
         try:
             report_date, snapshot = fetch_big_holder_snapshot(codes)
             _, market_snapshot = fetch_big_holder_snapshot()
@@ -271,12 +276,24 @@ def main():
         market_snapshot_path = BASE_DIR / "data" / "market_big_holder_snapshot.json"
         previous = load_previous_snapshot(snapshot_path)
         previous_market = load_previous_snapshot(market_snapshot_path)
-        if not previous_market or previous_market.get("date") >= report_date:
+        historical_previous = None
+        if (
+            not previous
+            or previous.get("date") >= report_date
+            or not previous_market
+            or previous_market.get("date") >= report_date
+        ):
             previous_date, previous_stocks = fetch_previous_market_snapshot(report_date)
-            previous_market = {"date": previous_date, "stocks": previous_stocks}
-        if "market_names" in locals():
-            for code, stock in market_snapshot.items():
-                stock["name"] = market_names.get(code, stock.get("name", code))
+            historical_previous = {"date": previous_date, "stocks": previous_stocks}
+        if not previous or previous.get("date") >= report_date:
+            previous = {
+                "date": historical_previous["date"],
+                "stocks": {code: stock for code, stock in historical_previous["stocks"].items() if code in codes},
+            }
+        if not previous_market or previous_market.get("date") >= report_date:
+            previous_market = historical_previous
+        for code, stock in market_snapshot.items():
+            stock["name"] = market_names.get(code, stock.get("name", code))
         rows = build_big_holder_rows(watchlist, snapshot, previous)
         rankings = build_big_holder_rankings(market_snapshot, previous_market)
         message = format_big_holder_message(report_date, previous.get("date") if previous else None, rows, rankings)

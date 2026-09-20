@@ -232,6 +232,29 @@ def get_latest_institutional_data(target_date: Optional[str] = None) -> Tuple[st
     raise RuntimeError("無法獲取最近一週之三大法人籌碼資料，請稍後再試。")
 
 
+def fetch_company_name_map() -> Dict[str, str]:
+    """以交易所公開基本資料補齊上市、上櫃與興櫃股票的中文簡稱。"""
+    sources = (
+        ("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", "公司代號", "公司簡稱"),
+        ("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O", "SecuritiesCompanyCode", "CompanyAbbreviation"),
+        ("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_R", "SecuritiesCompanyCode", "CompanyAbbreviation"),
+    )
+    names: Dict[str, str] = {}
+    for url, code_field, name_field in sources:
+        try:
+            rows = requests.get(url, timeout=30, verify=certifi.where()).json()
+            for row in rows:
+                code = str(row.get(code_field, "")).strip()
+                name = str(row.get(name_field, "")).strip()
+                if code and name:
+                    names[code] = name
+        except Exception as exc:
+            logger.warning("取得公司基本資料名稱失敗 (%s)：%s", url, exc)
+    if not names:
+        raise RuntimeError("交易所公司基本資料未回傳任何名稱")
+    return names
+
+
 def get_margin_balances(date_str: str) -> Dict[str, Dict[str, Any]]:
     """取得上市、上櫃個股融資前／今餘額與當日增減率。"""
     balances: Dict[str, Dict[str, Any]] = {}
