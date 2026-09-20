@@ -55,7 +55,13 @@ from src.notifier import (
 from src.state import NotificationState
 from src.events import collect_corporate_action_events, collect_monthly_revenue_events, collect_watchlist_events, collect_morning_calendar, format_morning_calendar, get_active_disposition_periods
 from src.holdings import get_stock_holdings
-from src.big_holders import build_big_holder_rows, fetch_big_holder_snapshot, load_previous_snapshot, save_snapshot
+from src.big_holders import (
+    build_big_holder_rankings,
+    build_big_holder_rows,
+    fetch_big_holder_snapshot,
+    load_previous_snapshot,
+    save_snapshot,
+)
 
 # 設定日誌格式
 logging.basicConfig(
@@ -256,13 +262,17 @@ def main():
             logger.warning("無法以盤後資料補齊大戶週報名稱，沿用既有名稱：%s", exc)
         try:
             report_date, snapshot = fetch_big_holder_snapshot(codes)
+            _, market_snapshot = fetch_big_holder_snapshot()
         except Exception as exc:
             logger.error("取得集保大戶資料失敗：%s", exc)
             return 1
         snapshot_path = BASE_DIR / "data" / "big_holder_snapshot.json"
+        market_snapshot_path = BASE_DIR / "data" / "market_big_holder_snapshot.json"
         previous = load_previous_snapshot(snapshot_path)
+        previous_market = load_previous_snapshot(market_snapshot_path)
         rows = build_big_holder_rows(watchlist, snapshot, previous)
-        message = format_big_holder_message(report_date, previous.get("date") if previous else None, rows)
+        rankings = build_big_holder_rankings(market_snapshot, previous_market)
+        message = format_big_holder_message(report_date, previous.get("date") if previous else None, rows, rankings)
         if args.dry_run:
             print(message)
             return 0
@@ -279,6 +289,7 @@ def main():
         )
         if delivered:
             save_snapshot(snapshot_path, report_date, snapshot)
+            save_snapshot(market_snapshot_path, report_date, market_snapshot)
         return 0 if delivered else 1
 
     if args.check_acks:

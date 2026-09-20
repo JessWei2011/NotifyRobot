@@ -143,7 +143,12 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
     return "\n".join(lines)
 
 
-def format_big_holder_message(report_date: str, previous_date: str | None, rows: List[Dict[str, Any]]) -> str:
+def format_big_holder_message(
+    report_date: str,
+    previous_date: str | None,
+    rows: List[Dict[str, Any]],
+    rankings: Dict[str, List[Dict[str, Any]]] | None = None,
+) -> str:
     lines = ["🧩 *【自選股大戶籌碼週報】*", f"📅 集保資料日：`{report_date}`"]
     if previous_date:
         lines.append(f"比較基準：`{previous_date}`")
@@ -168,6 +173,23 @@ def format_big_holder_message(report_date: str, previous_date: str | None, rows:
         else:
             conclusion = "大戶結構大致持平。"
         lines.append(f"   💡 結論：{conclusion}")
+    if rankings is None:
+        lines.extend([
+            "──────────────────────",
+            "📊 全市場 Top 10：本週已建立比較基準，下週起依持股比例增加幅度排行。",
+        ])
+    else:
+        for group, label in (("400", "400–999 張大戶"), ("1000", "千張大戶")):
+            lines.extend(["──────────────────────", f"📈 *【本週{label}持股比例增加 Top 10】*"])
+            entries = rankings.get(group, [])
+            if not entries:
+                lines.append("   本週無持股比例增加的標的")
+                continue
+            for index, entry in enumerate(entries, 1):
+                lines.append(
+                    f"{index}. 🔷 **{entry['code']} {entry['name']}**｜"
+                    f"`{entry['ratio']:.1f}%`（{entry['change']:+.2f}pt）"
+                )
     lines.extend(["──────────────────────", "💡 400–999 張與 1,000 張以上依集保持股級距統計；資料每週更新一次。"])
     return "\n".join(lines)
 

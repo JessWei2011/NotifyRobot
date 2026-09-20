@@ -23,8 +23,11 @@ def _number(value: object) -> float:
         return 0.0
 
 
-def fetch_big_holder_snapshot(codes: set[str]) -> tuple[str, dict[str, dict[str, Any]]]:
-    """取得集保最新週資料；400~999 張為級距 11~13，千張以上為級距 14。"""
+def fetch_big_holder_snapshot(codes: set[str] | None = None) -> tuple[str, dict[str, dict[str, Any]]]:
+    """取得集保最新週資料；400~999 張為級距 11~13，千張以上為級距 14。
+
+    ``codes`` 為 ``None`` 時保留全市場資料，用於建立每週 Top 10 比較基準。
+    """
     response = requests.get(TDCC_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=45, verify=False)
     response.raise_for_status()
     rows = csv.DictReader(io.StringIO(response.text.lstrip("\ufeff")))
@@ -32,13 +35,24 @@ def fetch_big_holder_snapshot(codes: set[str]) -> tuple[str, dict[str, dict[str,
     report_date = ""
     for row in rows:
         code = str(row.get("證券代號", "")).strip()
-        if code not in codes:
+        if codes is not None and code not in codes:
             continue
         report_date = str(row.get("資料日期", "")).strip() or report_date
         level = int(_number(row.get("持股分級")))
         if level not in {11, 12, 13, 14}:
             continue
-        stock = result.setdefault(code, {"holders_400": 0, "shares_400": 0, "ratio_400": 0.0, "holders_1000": 0, "shares_1000": 0, "ratio_1000": 0.0})
+        stock = result.setdefault(
+            code,
+            {
+                "name": str(row.get("證券名稱", "")).strip() or code,
+                "holders_400": 0,
+                "shares_400": 0,
+                "ratio_400": 0.0,
+                "holders_1000": 0,
+                "shares_1000": 0,
+                "ratio_1000": 0.0,
+            },
+        )
         if level in {11, 12, 13}:
             stock["holders_400"] += int(_number(row.get("人數")))
             stock["shares_400"] += int(_number(row.get("股數")))
@@ -88,3 +102,33 @@ def build_big_holder_rows(
             row[f"holders_change_{group}"] = None if old is None else stock[f"holders_{group}"] - int(_number(old.get(f"holders_{group}")))
         rows.append(row)
     return rows
+
+
+def build_big_holder_rankings(
+    current: dict[str, dict[str, Any]], previous: dict[str, Any] | None, limit: int = 10
+) -> dict[str, list[dict[str, Any]]] | None:
+    """依本週持股比例增幅，產生 400~999 張及千張大戶全市場排行。"""
+    previous_stocks = (previous or {}).get("stocks", {})
+    if not previous_stocks:
+        return None
+
+    rankings: dict[str, list[dict[str, Any]]] = {}
+    for group in ("400", "1000"):
+        changes: list[dict[str, Any]] = []
+        for code, stock in current.items():
+            old = previous_stocks.get(code)
+            if old is None:
+                continue
+            change = stock[f"ratio_{group}"] - _number(old.get(f"ratio_{group}"))
+            if change <= 0:
+                continue
+            changes.append(
+                {
+                    "code": code,
+                    "name": str(stock.get("name", code)).strip() or code,
+                    "ratio": stock[f"ratio_{group}"],
+                    "change": change,
+                }
+            )
+        rankings[group] = sorted(changes, key=lambda item: item["change"], reverse=True)[:limit]
+    return rankings
