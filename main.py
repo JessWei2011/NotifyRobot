@@ -17,6 +17,13 @@ import platform
 import random
 from pathlib import Path
 
+# Windows 控制台 UTF-8 編碼支援（避免 emoji 輸出時引發 cp950 UnicodeEncodeError）
+if sys.platform == "win32":
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # 設定基本路徑
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -178,10 +185,10 @@ def send_report(
             message_id, delivered = discord_result.message_id or message_id, True
         else:
             logger.error("%s Discord 同步失敗：%s", report_type, discord_result.error)
-    if not delivered or message_id is None:
+    if not delivered:
         logger.error("%s 沒有成功送達任何啟用的通知通道", report_type)
         return False
-    state.record_delivery(trade_date, report_type, message_id)
+    state.record_delivery(trade_date, report_type, message_id or 0)
     return True
 
 def main():
@@ -272,8 +279,8 @@ def main():
         ]
         codes = {str(item.get("code", "")).strip() for item in watchlist}
         try:
-            report_date, snapshot = fetch_big_holder_snapshot(codes)
-            _, market_snapshot = fetch_big_holder_snapshot()
+            report_date, market_snapshot = fetch_big_holder_snapshot()
+            snapshot = {code: stock for code, stock in market_snapshot.items() if code in codes}
         except Exception as exc:
             logger.error("取得集保大戶資料失敗：%s", exc)
             return 1
@@ -362,15 +369,24 @@ def main():
                 sent += 1
                 continue
             delivered = False
+            errors = []
             if telegram_enabled:
-                delivered = send_telegram_message(token, chat_id, event["text"], max_retries=notification_cfg.get("max_retries", 3)).success
+                tg_res = send_telegram_message(token, chat_id, event["text"], max_retries=notification_cfg.get("max_retries", 3))
+                if tg_res.success:
+                    delivered = True
+                else:
+                    errors.append(f"Telegram: {tg_res.error}")
             if discord_enabled:
-                delivered = send_discord_message(os.getenv("DISCORD_WEBHOOK_URL", "").strip(), event["text"], max_retries=notification_cfg.get("max_retries", 3)).success or delivered
+                dc_res = send_discord_message(os.getenv("DISCORD_WEBHOOK_URL", "").strip(), event["text"], max_retries=notification_cfg.get("max_retries", 3))
+                if dc_res.success:
+                    delivered = True
+                else:
+                    errors.append(f"Discord: {dc_res.error}")
             if delivered:
                 state.record_event_notification(event["id"])
                 sent += 1
             else:
-                logger.error("事件通知發送失敗：%s", result.error)
+                logger.error("事件通知發送失敗：%s", "; ".join(errors) or "無有效通道")
         for disposition_id, market, code, name, start_date, end_date, reason in state.pending_disposition_exits(datetime.date.today().isoformat()):
             text = (
                 f"🟢 *【處置結束｜{market}】*\n📌 *{code} {name}*\n"
@@ -381,15 +397,24 @@ def main():
                 sent += 1
                 continue
             delivered = False
+            errors = []
             if telegram_enabled:
-                delivered = send_telegram_message(token, chat_id, text, max_retries=notification_cfg.get("max_retries", 3)).success
+                tg_res = send_telegram_message(token, chat_id, text, max_retries=notification_cfg.get("max_retries", 3))
+                if tg_res.success:
+                    delivered = True
+                else:
+                    errors.append(f"Telegram: {tg_res.error}")
             if discord_enabled:
-                delivered = send_discord_message(os.getenv("DISCORD_WEBHOOK_URL", "").strip(), text, max_retries=notification_cfg.get("max_retries", 3)).success or delivered
+                dc_res = send_discord_message(os.getenv("DISCORD_WEBHOOK_URL", "").strip(), text, max_retries=notification_cfg.get("max_retries", 3))
+                if dc_res.success:
+                    delivered = True
+                else:
+                    errors.append(f"Discord: {dc_res.error}")
             if delivered:
                 state.record_disposition_exit(disposition_id)
                 sent += 1
             else:
-                logger.error("處置結束通知發送失敗：%s", result.error)
+                logger.error("處置結束通知發送失敗：%s", "; ".join(errors) or "無有效通道")
         logger.info("自選股事件檢查完成，新通知 %s 則", sent)
         return 0
 

@@ -262,10 +262,13 @@ def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.dat
                 f"（{action['market']}）{action['label']}：{_corporate_action_detail(action)}"
             )
 
-    next_month = start_date.replace(day=1) + datetime.timedelta(days=32)
-    revenue_deadline = next_month.replace(day=10)
-    if start_date <= revenue_deadline <= end_date:
-        items.append(f"📅 `{revenue_deadline.isoformat()}`｜上月營收申報截止提醒（實際以公開資訊觀測站公告為準）")
+    # 每月 10 號為上月營收申報法定截止日（檢查當月及次月 10 號是否落在提醒區間）
+    this_month_deadline = start_date.replace(day=10)
+    next_month = start_date.replace(day=28) + datetime.timedelta(days=4)
+    next_month_deadline = next_month.replace(day=10)
+    for deadline in (this_month_deadline, next_month_deadline):
+        if start_date <= deadline <= end_date:
+            items.append(f"📅 `{deadline.isoformat()}`｜上月營收申報截止提醒（實際以公開資訊觀測站公告為準）")
     return sorted(items)
 
 

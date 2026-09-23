@@ -8,6 +8,12 @@ import os
 import sys
 from pathlib import Path
 
+if sys.platform == "win32":
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # 輕量載入 .env
 def load_simple_env(env_path: Path):
     if not env_path.exists():

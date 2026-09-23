@@ -16,11 +16,15 @@
 
 ## 🚀 新手 3 步驟快速上手
 
-### 一鍵執行（Mac）
+### 一鍵執行（Mac / Windows）
 
-完成 `.env` 設定後，直接在 Finder 雙擊 `run.command`，即可執行一次正式推播。視窗會保留執行結果；同一交易日已成功推播的報告會自動略過。
+完成 `.env` 設定後：
+- **Mac**：在 Finder 雙擊 `run.command`。
+- **Windows**：直接雙擊 `run.bat`。
 
-首次取得 Telegram Chat ID 時，請先對新 Bot 傳送 `hi`，再雙擊 `setup_telegram.command`。
+即可執行一次正式推播。視窗會保留執行結果；同一交易日已成功推播的報告會自動略過。
+
+首次取得 Telegram Chat ID 時，請先對新 Bot 傳送 `hi`，Mac 雙擊 `setup_telegram.command`，Windows 可執行 `python test_telegram.py`。
 
 ### 步驟 1：建立 Telegram Bot（約 2 分鐘）
 
@@ -74,7 +78,11 @@
 
 ## ⚙️ 如何新增或修改自選股？
 
-最簡單的方式是在 Finder 雙擊 `config_ui.command`。瀏覽器會開啟本機設定頁，可新增、刪除與修改通知個股；按「儲存通知清單」後，下次推播便會套用。此清單會與未來自動同步的永豐非 ETF 持股合併。
+最簡單的方式是開啟本機設定頁：
+- **Mac**：在 Finder 雙擊 `config_ui.command`。
+- **Windows**：雙擊 `config_ui.bat`。
+
+瀏覽器會開啟本機設定頁，可新增、刪除與修改通知個股；按「儲存通知清單」後，下次推播便會套用。此清單會與未來自動同步的永豐非 ETF 持股合併。
 
 開啟 `config.json`，直接修改 `watchlist` 陣列即可：
 
