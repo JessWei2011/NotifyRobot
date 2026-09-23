@@ -1,9 +1,10 @@
 """SQLite-backed delivery and acknowledgement state."""
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 
 class NotificationState:
@@ -144,6 +145,36 @@ class NotificationState:
             (_now(), disposition_id),
         )
         self.connection.commit()
+
+    def get_market_amount_snapshot(self, trade_date: str) -> Optional[Dict[str, Any]]:
+        row = self.connection.execute(
+            "SELECT value FROM metadata WHERE key = ?",
+            (f"market_amount_summary_{trade_date}",),
+        ).fetchone()
+        if row:
+            try:
+                return json.loads(row[0])
+            except Exception:
+                return None
+        return None
+
+    def set_market_amount_snapshot(self, trade_date: str, summary: Dict[str, Any], status: str) -> None:
+        self.connection.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            (f"market_amount_summary_{trade_date}", json.dumps(summary)),
+        )
+        self.connection.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            (f"market_amount_status_{trade_date}", status),
+        )
+        self.connection.commit()
+
+    def get_market_amount_status(self, trade_date: str) -> Optional[str]:
+        row = self.connection.execute(
+            "SELECT value FROM metadata WHERE key = ?",
+            (f"market_amount_status_{trade_date}",),
+        ).fetchone()
+        return row[0] if row else None
 
 
 def _now() -> str:

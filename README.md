@@ -10,7 +10,7 @@
 
 若要自動同步永豐 Shioaji 的非 ETF 持股，請在 NotifyRobot 的 `.env` 設定 `SJ_ENV_FILE` 指向已驗證可用的 Shioaji `.env`。程式只讀取持股，不會啟用憑證或下單；指定的憑證檔優先於 NotifyRobot 內舊的 Shioaji 變數。
 
-若要確認遠端電腦與排程正常運作，可另外建立 Discord 頻道並設定 `DISCORD_HEARTBEAT_WEBHOOK_URL`。執行 `python3 main.py --heartbeat-discord` 會在該頻道發送主機名稱與目前時間；`setup_cron.sh` 會將它排在每小時整點執行。可在 `config.json` 的 `discord_heartbeat.message` 自訂內容，並以 `{hostname}`、`{time}` 與 `{quote}` 插入主機名稱、發送時間與隨機金句；金句清單由 `discord_heartbeat.quotes` 管理。將 `discord_heartbeat.enabled` 改為 `false` 即可暫停心跳。
+若要確認遠端電腦與排程正常運作，可另外建立 Discord 頻道並設定 `DISCORD_HEARTBEAT_WEBHOOK_URL`。執行 `python3 main.py --heartbeat-discord` 可手動在該頻道發送主機名稱與目前時間。可在 `config.json` 的 `discord_heartbeat.message` 自訂內容，並以 `{hostname}`、`{time}` 與 `{quote}` 插入主機名稱、發送時間與隨機金句；金句清單由 `discord_heartbeat.quotes` 管理。將 `discord_heartbeat.enabled` 改為 `false` 即可停用手動心跳。
 
 ---
 
@@ -60,12 +60,12 @@
    ```bash
    ./setup_cron.sh
    ```
-   *排程將於平日週一至週五 15:00–18:50 每 10 分鐘確認一次當日法人資料，資料就緒後推送一次；20:30 推送上市與上櫃個股報告；每小時整點另發送 Discord 主機心跳，並寫入 `bot.log`。*
+   *排程將於平日週一至週五 15:00–18:50 每 10 分鐘確認一次當日法人資料，資料就緒後推送一次；20:30 推送上市與上櫃個股報告；08:30 推送開盤前行事曆（沒有事件時也會通知），並寫入 `bot.log`。*
 
 ## ✅ 推播成功與「已收到」確認
 
 - Telegram API 回傳成功與 `message_id` 後，程式才會將報告標記為已推播；暫時性網路錯誤、429 或伺服器錯誤會自動重試。
-- 14:50 大盤訊息顯示上市市場的外資、投信、自營商（含自行買賣與避險）及三大法人合計之淨買賣超金額。
+- 大盤法人買賣超採兩階段獨立推播：15:00（約 15:10 資料就緒）推播「盤後初估版本」，17:00 推播「盤後定案版本」。自營商僅計算自行買賣，避險部位不納入三大法人現貨合計計算（附帶備註參考）。
 - 同一交易日的同一份報告預設只發送一次。若需手動重送，使用 `python3 main.py --force`。
 - 每則正式推播預設附有「✅ 已收到」按鈕。點擊後會記錄於 `data/notification_state.sqlite3`。
 - `setup_cron.sh` 同時會加上一個每五分鐘執行的確認同步工作。若不使用 cron，可手動執行 `python3 main.py --check-acks`。

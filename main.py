@@ -191,6 +191,7 @@ def main():
     parser.add_argument("--force", action="store_true", help="即使同交易日已推播，也強制重新發送")
     parser.add_argument("--check-acks", action="store_true", help="只同步使用者按下「已收到」的紀錄")
     parser.add_argument("--market-summary", action="store_true", help="只推送上市大盤三大法人買賣超金額")
+    parser.add_argument("--market-mode", choices=["auto", "preliminary", "final"], default="auto", help="大盤金額模式 (auto: 17:00前為初估，17:00後為定案)")
     parser.add_argument("--check-events", action="store_true", help="檢查自選股重大訊息、注意與處置事件")
     parser.add_argument("--morning-calendar", action="store_true", help="推送自選股開盤前行事曆")
     parser.add_argument("--big-holder-report", action="store_true", help="推送自選股集保大戶週報")
@@ -401,8 +402,7 @@ def main():
         codes = {str(item.get("code", "")).strip() for item in get_watchlist(config)}
         items = collect_morning_calendar(codes, start_date)
         if not items:
-            logger.info("未來 7 天沒有已公告的自選股行事")
-            return 0
+            logger.info("未來 7 天沒有已公告的自選股行事，仍發送今日無事件通知")
         message = format_morning_calendar(start_date, items)
         if args.dry_run:
             print(message)
@@ -425,20 +425,57 @@ def main():
         except Exception as exc:
             logger.error("獲取上市大盤法人金額失敗: %s", exc)
             return 1
-        message = format_market_institutional_amount_message(trade_date, summary)
+
+        state = NotificationState(BASE_DIR / "data" / "notification_state.sqlite3")
+
+        # 判定發送模式（auto: 17:00 前發送初估 preliminary，17:00 起發送定案 final；指定歷史日期固定為 final）
+        today_str = datetime.date.today().strftime("%Y%m%d")
+        now_time = datetime.datetime.now().time()
+        is_today = (trade_date == today_str)
+
+        if args.market_mode == "preliminary":
+            mode = "preliminary"
+        elif args.market_mode == "final":
+            mode = "final"
+        else:
+            mode = "final" if ((not is_today) or now_time >= datetime.time(17, 0)) else "preliminary"
+
+        report_type = f"market_amount_{mode}"
+
+        if state.was_sent(trade_date, report_type) and not args.force:
+            label = "初估版本" if mode == "preliminary" else "定案版本"
+            logger.info("略過已成功推播的 %s（%s，%s）；需要重送可加 --force", trade_date, report_type, label)
+            return 0
+
+        message = format_market_institutional_amount_message(
+            trade_date,
+            summary,
+            status=mode,
+        )
+
         if args.dry_run:
             print(message)
             return 0
+
         chat_id = os.getenv("TELEGRAM_CHAT_ID")
         notification_cfg = config.get("notification", {})
         if not notification_cfg.get("send_market_amount_summary", True):
             logger.info("上市大盤法人金額推播已關閉")
             return 0
-        state = NotificationState(BASE_DIR / "data" / "notification_state.sqlite3")
-        return 0 if send_report(
-            token, chat_id, trade_date, "market_amount", message, state, args.force,
-            notification_cfg.get("enable_ack_button", True), notification_cfg.get("max_retries", 3), telegram_enabled, discord_enabled,
-        ) else 1
+
+        delivered = send_report(
+            token, chat_id, trade_date, report_type, message, state,
+            force=args.force,
+            enable_ack_button=notification_cfg.get("enable_ack_button", True),
+            max_retries=notification_cfg.get("max_retries", 3),
+            telegram_enabled=telegram_enabled,
+            discord_enabled=discord_enabled,
+        )
+        if delivered:
+            label = "盤後初估" if mode == "preliminary" else "盤後定案"
+            logger.info("已成功推播 %s 上市大盤三大法人金額（%s）", trade_date, label)
+            return 0
+        return 1
 
     logger.info("=== 開始執行台股盤後籌碼分析 ===")
 

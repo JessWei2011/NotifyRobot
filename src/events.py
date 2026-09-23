@@ -270,11 +270,12 @@ def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.dat
 
 
 def format_morning_calendar(start_date: datetime.date, items: List[str]) -> str:
+    calendar_items = items or ["📭 今日無已公告的自選股行事。"]
     lines = [
         "🌅 *【自選股開盤前行事曆】*",
         f"📅 範圍：`{start_date.isoformat()}` 起 7 天",
         "──────────────────────",
-        *items,
+        *calendar_items,
         "──────────────────────",
         "💡 僅列已公告的自選股除權、除息／配息與申報期限；日期以公司正式公告為準。",
     ]

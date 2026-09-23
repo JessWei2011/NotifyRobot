@@ -84,22 +84,45 @@ def format_market_institutional_message(date_str: str, summary: Dict[str, int]) 
     return "\n".join(lines)
 
 
-def format_market_institutional_amount_message(date_str: str, summary: Dict[str, int]) -> str:
-    """產出上市大盤三大法人的淨買賣超金額摘要。"""
+def format_market_institutional_amount_message(
+    date_str: str,
+    summary: Dict[str, Any],
+    status: str = "final",
+) -> str:
+    """產出上市大盤三大法人的淨買賣超金額摘要（自營商不含避險）。"""
+    title = (
+        "📈 *【上市大盤三大法人買賣超（盤後初估）】*"
+        if status == "preliminary"
+        else "📈 *【上市大盤三大法人買賣超（盤後定案）】*"
+    )
+
     lines = [
-        "📈 *【上市大盤三大法人買賣超】*",
+        title,
         f"📅 日期：`{date_str}`",
         "💰 單位：新台幣億元（淨買／賣超）",
         "──────────────────────",
     ]
-    for label, key in (("外資", "foreign"), ("投信", "trust"), ("自營商", "dealer"), ("三大法人合計", "total")):
-        amount = summary[key]
-        direction = "買超" if amount > 0 else "賣超" if amount < 0 else "持平"
-        lines.append(f"📌 *{label}*：{direction} `{amount / 100_000_000:+,.1f} 億`")
-    lines.extend([
-        "──────────────────────",
-        "💡 資料範圍：證交所上市市場；自營商含自行買賣與避險。",
-    ])
+
+    # 外資
+    f_amt = summary.get("foreign", 0)
+    f_dir = "買超" if f_amt > 0 else "賣超" if f_amt < 0 else "持平"
+    lines.append(f"📌 *外資*：{f_dir} `{f_amt / 100_000_000:+,.1f} 億`")
+
+    # 投信
+    t_amt = summary.get("trust", 0)
+    t_dir = "買超" if t_amt > 0 else "賣超" if t_amt < 0 else "持平"
+    lines.append(f"📌 *投信*：{t_dir} `{t_amt / 100_000_000:+,.1f} 億`")
+
+    # 自營商（自行買賣）
+    d_amt = summary.get("dealer", 0)
+    d_dir = "買超" if d_amt > 0 else "賣超" if d_amt < 0 else "持平"
+    lines.append(f"📌 *自營商（自行買賣）*：{d_dir} `{d_amt / 100_000_000:+,.1f} 億`")
+
+    # 三大法人合計（外資 + 投信 + 自營自行買賣）
+    tot_amt = summary.get("total", 0)
+    tot_dir = "買超" if tot_amt > 0 else "賣超" if tot_amt < 0 else "持平"
+    lines.append(f"📌 *三大法人合計*：{tot_dir} `{tot_amt / 100_000_000:+,.1f} 億`")
+
     return "\n".join(lines)
 
 def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]) -> str:

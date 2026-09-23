@@ -175,7 +175,15 @@ def fetch_twse_market_institutional_amounts(date_str: str) -> Optional[Dict[str,
         if None in (foreign, trust, dealer_self, dealer_hedge, total):
             logger.warning("日期 %s 的上市大盤法人金額欄位不完整", date_str)
             return None
-        return {"foreign": foreign, "trust": trust, "dealer": dealer_self + dealer_hedge, "total": total}
+        return {
+            "foreign": foreign,
+            "trust": trust,
+            "dealer": dealer_self,  # 排除避險，僅計自行買賣
+            "dealer_self": dealer_self,
+            "dealer_hedge": dealer_hedge,
+            "total": foreign + trust + dealer_self,  # 排除避險合計
+            "twse_total": total,  # 證交所官方含避險合計
+        }
     except Exception as exc:
         logger.error("抓取 TWSE 大盤法人金額失敗 (%s): %s", date_str, exc)
         return None
