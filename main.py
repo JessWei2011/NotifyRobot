@@ -225,6 +225,7 @@ def main():
     parser.add_argument("--big-holder-report", action="store_true", help="推送自選股集保大戶週報")
     parser.add_argument("--test-discord", action="store_true", help="發送 Discord Webhook 連線測試")
     parser.add_argument("--heartbeat-discord", action="store_true", help="發送 Discord 主機心跳通知")
+    parser.add_argument("--screener-only", action="store_true", help="只推送籌碼策略榜單（不推自選股）")
     args = parser.parse_args()
 
     config = load_config()
@@ -615,7 +616,7 @@ def main():
     sent_ok = True
 
     # 發送自選股
-    if notification_cfg.get("send_watchlist", True):
+    if notification_cfg.get("send_watchlist", True) and not args.screener_only:
         logger.info("正在推送自選股分析報告...")
         sent_ok &= send_report(token, chat_id, trade_date, "watchlist", watchlist_msg, state, args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled)
 
