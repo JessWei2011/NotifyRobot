@@ -211,6 +211,20 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
                 else:
                     flow_desc = f"集中度 `{conc:+.1f}%` ⚠️ 主力大幅倒貨，由全台散戶接盤"
                 lines.append(f"   • 籌碼流向：{flow_desc}")
+
+            # 隔日衝主力警戒
+            day_trading_brokers = [
+                "凱基-台北", "凱基台北", "富邦-建國", "富邦建國", "元大-土城永寧", "土城永寧",
+                "富邦-忠孝", "國泰-敦南", "群益金鼎-大安", "兆豐-大同", "元大-北府", "華南永昌-世貿", "凱基-松山"
+            ]
+            hit_dt = []
+            for b in top_buyers:
+                for dt in day_trading_brokers:
+                    if dt in b:
+                        hit_dt.append(b.split("+")[0].strip())
+                        break
+            if hit_dt:
+                lines.append(f"   • 隔日衝警戒：⚡ 買方見【{'、'.join(hit_dt)}】隔日衝大戶，次日開盤切勿追高！")
         if "big_order_net_lots" in item:
             net_lots = item["big_order_net_lots"]
             net_str = _format_num(net_lots)
