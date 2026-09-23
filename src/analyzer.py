@@ -88,14 +88,15 @@ def filter_total_top_buyers(records: List[Dict[str, Any]], top_n: int = 10) -> L
     return candidates[:top_n]
 
 def filter_dual_top_buyers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
-    """外資 + 投信買超合計 TOP N"""
+    """外資＋投信同步買超 TOP N（土洋合作：外資 > 0 且 投信 > 0）"""
     candidates = []
     for r in records:
         if not is_common_stock(r["code"]):
             continue
-        dual_total = r["foreign_lots"] + r["trust_lots"]
-        if dual_total > 0:
-            candidates.append({**r, "dual_total": dual_total})
+        f_lots = r["foreign_lots"]
+        t_lots = r["trust_lots"]
+        if f_lots > 0 and t_lots > 0:
+            candidates.append({**r, "dual_total": f_lots + t_lots})
     candidates.sort(key=lambda x: x["dual_total"], reverse=True)
     return candidates[:top_n]
 
@@ -115,14 +116,15 @@ def filter_it_top_buyers(records: List[Dict[str, Any]], top_n: int = 10) -> List
     return candidates[:top_n]
 
 def filter_dual_top_sellers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
-    """外資 + 投信賣超合計 TOP N（賣超最多排最前）"""
+    """外資＋投信同步賣超 TOP N（土洋同步賣超：外資 < 0 且 投信 < 0）"""
     candidates = []
     for r in records:
         if not is_common_stock(r["code"]):
             continue
-        dual_total = r["foreign_lots"] + r["trust_lots"]
-        if dual_total < 0:
-            candidates.append({**r, "dual_total": dual_total})
+        f_lots = r["foreign_lots"]
+        t_lots = r["trust_lots"]
+        if f_lots < 0 and t_lots < 0:
+            candidates.append({**r, "dual_total": f_lots + t_lots})
     candidates.sort(key=lambda x: x["dual_total"])
     return candidates[:top_n]
 

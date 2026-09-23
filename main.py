@@ -556,12 +556,11 @@ def main():
     screener_cfg = config.get("screener", {})
     top_n = screener_cfg.get("top_n", 10)
 
-    # 單日買超
-    total_buyers = filter_total_top_buyers(records, top_n=top_n)
+    # 單日買超（土洋合作、外資買超、投信買超）
     dual_buyers = filter_dual_top_buyers(records, top_n=top_n)
     foreign_buyers = filter_foreign_top_buyers(records, top_n=top_n)
     it_buyers = filter_it_top_buyers(records, top_n=top_n)
-    daily_buyers_msg = format_daily_buyers_message(trade_date, total_buyers, dual_buyers, foreign_buyers, it_buyers)
+    daily_buyers_msg = format_daily_buyers_message(trade_date, dual_buyers, foreign_buyers, it_buyers)
 
     # 單日賣超
     dual_sellers = filter_dual_top_sellers(records, top_n=top_n)

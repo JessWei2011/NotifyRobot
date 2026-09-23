@@ -266,7 +266,6 @@ def format_screener_message(
 
 def format_daily_buyers_message(
     date_str: str,
-    total_buyers: List[Dict[str, Any]],
     dual_buyers: List[Dict[str, Any]],
     foreign_buyers: List[Dict[str, Any]],
     it_buyers: List[Dict[str, Any]],
@@ -275,33 +274,17 @@ def format_daily_buyers_message(
         "📊 *【盤後籌碼榜｜單日買超強勢】*",
         f"📅 日期：`{date_str}`",
         "──────────────────────",
-        "👑 *三大法人合計買超 Top 10*",
+        "🔥 *外資 & 投信同步買超 Top 10（土洋合作）*",
     ]
-    if not total_buyers:
-        lines.append("   無資料")
-    else:
-        for idx, item in enumerate(total_buyers, 1):
-            f_lots = item.get("foreign_lots", 0)
-            t_lots = item.get("trust_lots", 0)
-            d_lots = item.get("dealer_lots", 0)
-            lines.append(
-                f"{idx}. *{item['code']} {item['name']}*：`+{item['total_lots']:,}` 張 "
-                f"(外 `{f_lots:+,}`｜投 `{t_lots:+,}`｜自 `{d_lots:+,}`)"
-            )
-
-    lines.extend([
-        "──────────────────────",
-        "🔥 *外資＋投信買超 Top 10*",
-    ])
     if not dual_buyers:
-        lines.append("   無資料")
+        lines.append("   無符合條件之標的")
     else:
         for idx, item in enumerate(dual_buyers, 1):
             f_lots = item.get("foreign_lots", 0)
             t_lots = item.get("trust_lots", 0)
             lines.append(
                 f"{idx}. *{item['code']} {item['name']}*：`+{item['dual_total']:,}` 張 "
-                f"(外 `{f_lots:+,}`｜投 `{t_lots:+,}`)"
+                f"(外 `+{f_lots:,}`｜投 `+{t_lots:,}`)"
             )
 
     lines.extend([
@@ -338,17 +321,17 @@ def format_daily_sellers_message(
         "⚠️ *【盤後籌碼榜｜單日賣超警示】*",
         f"📅 日期：`{date_str}`",
         "──────────────────────",
-        "💥 *外資＋投信賣超 Top 10*",
+        "💥 *外資 & 投信同步賣超 Top 10（土洋同步賣超）*",
     ]
     if not dual_sellers:
-        lines.append("   無資料")
+        lines.append("   無符合條件之標的")
     else:
         for idx, item in enumerate(dual_sellers, 1):
             f_lots = item.get("foreign_lots", 0)
             t_lots = item.get("trust_lots", 0)
             lines.append(
                 f"{idx}. *{item['code']} {item['name']}*：`{item['dual_total']:,}` 張 "
-                f"(外 `{f_lots:+,}`｜投 `{t_lots:+,}`)"
+                f"(外 `{f_lots:,}`｜投 `{t_lots:,}`)"
             )
 
     lines.extend([
