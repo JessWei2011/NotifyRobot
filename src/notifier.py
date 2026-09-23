@@ -27,29 +27,59 @@ def _highlight_discord_stock_headers(description: str) -> str:
     return DISCORD_STOCK_HEADER_PATTERN.sub(replace, description)
 
 
-def send_discord_message(webhook_url: str, text: str, max_retries: int = 3) -> SendResult:
-    """透過 Discord Incoming Webhook 發送卡片式通知。"""
-    if not webhook_url:
-        return SendResult(False, error="missing Discord webhook URL")
+def send_discord_message(
+    webhook_url: str = "",
+    text: str = "",
+    max_retries: int = 3,
+    bot_token: Optional[str] = None,
+    channel_id: Optional[str] = None,
+) -> SendResult:
+    """透過 Discord Bot API 或 Incoming Webhook 發送卡片式通知。"""
+    use_bot = bool(bot_token and channel_id)
+    if not use_bot and not webhook_url:
+        return SendResult(False, error="missing Discord bot credentials or webhook URL")
+
     title = re.sub(r"[*`_]", "", text.splitlines()[0]).strip()[:256] or "NotifyRobot"
     description = _highlight_discord_stock_headers(text[len(text.splitlines()[0]):].strip())[:4096] or "通知內容"
-    payload = {
-        "username": "NotifyRobot",
-        "embeds": [{"title": title, "description": description, "color": 0x3B82F6}],
-        "allowed_mentions": {"parse": []},
-    }
+
+    if use_bot:
+        endpoint = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+        headers = {
+            "Authorization": f"Bot {bot_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "embeds": [{"title": title, "description": description, "color": 0x3B82F6}],
+            "allowed_mentions": {"parse": []},
+        }
+    else:
+        endpoint = f"{webhook_url}?wait=true"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "username": "NotifyRobot",
+            "embeds": [{"title": title, "description": description, "color": 0x3B82F6}],
+            "allowed_mentions": {"parse": []},
+        }
+
     for attempt in range(max_retries + 1):
         try:
-            response = requests.post(f"{webhook_url}?wait=true", json=payload, timeout=15)
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
             if response.ok:
                 body = response.json() if response.content else {}
-                logger.info("Discord 訊息推播成功 (message_id: %s)", body.get("id"))
+                target_label = f"channel {channel_id}" if use_bot else "webhook"
+                logger.info("Discord 訊息推播成功 (%s, message_id: %s)", target_label, body.get("id"))
                 return SendResult(True, message_id=int(body["id"]) if str(body.get("id", "")).isdigit() else None)
             error, retryable = f"HTTP {response.status_code}: {response.text[:200]}", response.status_code in {429, 500, 502, 503, 504}
+            wait_time = 2 ** attempt
+            if response.status_code == 429:
+                try:
+                    wait_time = float(response.json().get("retry_after", wait_time))
+                except Exception:
+                    pass
         except requests.RequestException as exc:
-            error, retryable = str(exc), True
+            error, retryable, wait_time = str(exc), True, 2 ** attempt
         if retryable and attempt < max_retries:
-            time.sleep(2 ** attempt)
+            time.sleep(wait_time)
             continue
         logger.error("Discord 推播失敗：%s", error)
         return SendResult(False, error=error)
@@ -153,7 +183,44 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
         lines.append(f"   • 外資：{f_str}")
         lines.append(f"   • 投信：{t_str}")
         lines.append(f"   • 自營商：{d_str}")
-        lines.append(f"   • 法人合計：*{total_str}*")
+        lines.append(f"   • 法人合計：{total_str}")
+        if "broker_net_lots" in item:
+            b_net = item["broker_net_lots"]
+            b_net_str = _format_num(b_net)
+            b_buy = item.get("broker_buy_lots", 0)
+            b_sell = item.get("broker_sell_lots", 0)
+            lines.append(f"   • 主力分點：{b_net_str}（前15大買 `{b_buy:,}`／賣 `{b_sell:,}`）")
+
+            top_buyers = item.get("top_buyers", [])
+            top_sellers = item.get("top_sellers", [])
+            if top_buyers or top_sellers:
+                b_str = "、".join(top_buyers) if top_buyers else "無"
+                s_str = "、".join(top_sellers) if top_sellers else "無"
+                lines.append(f"   • 分點買賣：買【{b_str}】｜賣【{s_str}】")
+
+            conc = item.get("broker_concentration")
+            if conc is not None:
+                if conc >= 15.0:
+                    flow_desc = f"集中度 `{conc:+.1f}%` 🔥 主力強力吸籌，籌碼高度集中"
+                elif conc >= 5.0:
+                    flow_desc = f"集中度 `{conc:+.1f}%` 🟢 主力偏多吸籌，籌碼趨向集中"
+                elif conc > -5.0:
+                    flow_desc = f"集中度 `{conc:+.1f}%` ⚖️ 主力多空拉鋸，籌碼中性平衡"
+                elif conc > -15.0:
+                    flow_desc = f"集中度 `{conc:+.1f}%` ⚠️ 籌碼偏向發散，流向散戶接盤"
+                else:
+                    flow_desc = f"集中度 `{conc:+.1f}%` ⚠️ 主力大幅倒貨，由全台散戶接盤"
+                lines.append(f"   • 籌碼流向：{flow_desc}")
+        if "big_order_net_lots" in item:
+            net_lots = item["big_order_net_lots"]
+            net_str = _format_num(net_lots)
+            buy_lots = item.get("big_order_buy_lots", 0)
+            sell_lots = item.get("big_order_sell_lots", 0)
+            pct = item.get("big_order_volume_ratio")
+            pct_text = f"｜佔比 `{pct:.1f}%`" if pct is not None else ""
+            t_wan = item.get("big_order_threshold_wan")
+            t_text = f"單筆≥{t_wan}萬｜" if t_wan else ""
+            lines.append(f"   • 大戶力道：{net_str}（{t_text}買 `{buy_lots:,}`／賣 `{sell_lots:,}`{pct_text}）")
         if "margin_current" in item:
             change = item["margin_change"]
             rate = item.get("margin_change_rate")

@@ -50,11 +50,14 @@ load_simple_env(BASE_DIR / ".env")
 from src.fetcher import (
     ensure_chip_history,
     fetch_company_name_map,
+    fetch_watchlist_broker_chips,
     get_latest_institutional_data,
     get_latest_market_institutional_amounts,
     get_margin_balances,
 )
 from src.analyzer import (
+    add_big_order_data,
+    add_broker_chip_data,
     add_margin_data,
     analyze_watchlist,
     calculate_consecutive_buyers,
@@ -68,6 +71,7 @@ from src.analyzer import (
     filter_total_top_buyers,
 )
 from src.notifier import (
+    SendResult,
     answer_callback_query,
     format_big_holder_message,
     format_consecutive_buyers_message,
@@ -82,7 +86,7 @@ from src.notifier import (
 )
 from src.state import NotificationState
 from src.events import collect_corporate_action_events, collect_monthly_revenue_events, collect_watchlist_events, collect_morning_calendar, format_morning_calendar, get_active_disposition_periods
-from src.holdings import get_stock_holdings
+from src.holdings import get_stock_holdings, fetch_big_order_flow
 from src.big_holders import (
     build_big_holder_rankings,
     build_big_holder_rows,
@@ -139,7 +143,38 @@ def get_watchlist(config):
 def get_notification_channels(config):
     """讀取通知通道開關；至少保留一個通道才會推播。"""
     channels = config.get("channels", {})
-    return channels.get("telegram_enabled", True), channels.get("discord_enabled", bool(os.getenv("DISCORD_WEBHOOK_URL")))
+    has_discord = bool(
+        (os.getenv("DISCORD_BOT_TOKEN") and os.getenv("DISCORD_CHANNEL_ID"))
+        or os.getenv("DISCORD_WEBHOOK_URL")
+    )
+    return channels.get("telegram_enabled", True), channels.get("discord_enabled", has_discord)
+
+
+def dispatch_discord_message(
+    text: str,
+    report_type: str = "",
+    max_retries: int = 3,
+) -> SendResult:
+    """發送 Discord 訊息，自動依報告種類分流頻道（#台股通知 或 #籌碼資料），若未設 Bot 則降級使用 Webhook"""
+    bot_token = os.getenv("DISCORD_BOT_TOKEN", "").strip()
+    chip_channel_id = os.getenv("DISCORD_CHIP_CHANNEL_ID", "").strip()
+    general_channel_id = os.getenv("DISCORD_CHANNEL_ID", "").strip()
+
+    # 三大法人買賣超榜單與波段連買等大量籌碼策略資料分流至 DISCORD_CHIP_CHANNEL_ID（#籌碼資料）
+    if report_type in {"screener_buyers", "screener_sellers", "screener_consecutive"}:
+        target_channel_id = chip_channel_id or general_channel_id
+    else:
+        target_channel_id = general_channel_id
+
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+
+    return send_discord_message(
+        webhook_url=webhook_url,
+        text=text,
+        max_retries=max_retries,
+        bot_token=bot_token if bot_token and target_channel_id else None,
+        channel_id=target_channel_id if bot_token and target_channel_id else None,
+    )
 
 
 def acknowledgement_keyboard(trade_date: str, report_type: str):
@@ -200,8 +235,7 @@ def send_report(
         else:
             logger.error("%s Telegram 推播失敗：%s", report_type, result.error)
     if discord_enabled:
-        discord_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-        discord_result = send_discord_message(discord_url, text, max_retries=max_retries)
+        discord_result = dispatch_discord_message(text, report_type=report_type, max_retries=max_retries)
         if discord_result.success:
             message_id, delivered = discord_result.message_id or message_id, True
         else:
@@ -233,14 +267,45 @@ def main():
     telegram_enabled, discord_enabled = get_notification_channels(config)
 
     if args.test_discord:
-        result = send_discord_message(
-            os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
-            "✅ *【Discord 通知測試】*\nWebhook 已連線成功。後續台股報告會同步推播到這個頻道。",
-        )
-        if not result.success:
-            logger.error("Discord 測試失敗：%s", result.error)
-            return 1
-        return 0
+        bot_token = os.getenv("DISCORD_BOT_TOKEN", "").strip()
+        general_ch = os.getenv("DISCORD_CHANNEL_ID", "").strip()
+        chip_ch = os.getenv("DISCORD_CHIP_CHANNEL_ID", "").strip()
+
+        if bot_token and (general_ch or chip_ch):
+            all_ok = True
+            if general_ch:
+                res1 = send_discord_message(
+                    text="✅ *【Discord 通知測試】*\n機器人已連線成功。後續台股自選股、重大訊息、行事曆與大盤法人金額將推播到此頻道（#台股通知）。",
+                    bot_token=bot_token,
+                    channel_id=general_ch,
+                )
+                if res1.success:
+                    logger.info("Discord 台股通知頻道 (%s) 測試成功", general_ch)
+                else:
+                    logger.error("Discord 台股通知頻道 (%s) 測試失敗：%s", general_ch, res1.error)
+                    all_ok = False
+            if chip_ch:
+                res2 = send_discord_message(
+                    text="📊 *【Discord 籌碼資料測試】*\n機器人已連線成功。後續三大法人買賣超榜單與波段連買策略將推播到此頻道（#籌碼資料）。",
+                    bot_token=bot_token,
+                    channel_id=chip_ch,
+                )
+                if res2.success:
+                    logger.info("Discord 籌碼資料頻道 (%s) 測試成功", chip_ch)
+                else:
+                    logger.error("Discord 籌碼資料頻道 (%s) 測試失敗：%s", chip_ch, res2.error)
+                    all_ok = False
+            return 0 if all_ok else 1
+        else:
+            result = send_discord_message(
+                webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
+                text="✅ *【Discord 通知測試】*\nWebhook 已連線成功。後續台股報告會同步推播到這個頻道。",
+            )
+            if not result.success:
+                logger.error("Discord 測試失敗：%s", result.error)
+                return 1
+            logger.info("Discord 測試成功")
+            return 0
 
     if args.heartbeat_discord:
         notification_cfg = config.get("notification", {})
@@ -263,10 +328,15 @@ def main():
         if args.dry_run:
             print(message)
             return 0
+        bot_token = os.getenv("DISCORD_BOT_TOKEN", "").strip()
+        general_ch = os.getenv("DISCORD_CHANNEL_ID", "").strip()
+        heartbeat_webhook = os.getenv("DISCORD_HEARTBEAT_WEBHOOK_URL", "").strip()
         result = send_discord_message(
-            os.getenv("DISCORD_HEARTBEAT_WEBHOOK_URL", "").strip(),
-            message,
+            webhook_url=heartbeat_webhook or os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
+            text=message,
             max_retries=notification_cfg.get("max_retries", 3),
+            bot_token=bot_token if (bot_token and general_ch and not heartbeat_webhook) else None,
+            channel_id=general_ch if (bot_token and general_ch and not heartbeat_webhook) else None,
         )
         if not result.success:
             logger.error("Discord 主機心跳發送失敗：%s", result.error)
@@ -399,7 +469,7 @@ def main():
                 else:
                     errors.append(f"Telegram: {tg_res.error}")
             if discord_enabled:
-                dc_res = send_discord_message(os.getenv("DISCORD_WEBHOOK_URL", "").strip(), event["text"], max_retries=notification_cfg.get("max_retries", 3))
+                dc_res = dispatch_discord_message(event["text"], report_type="event", max_retries=notification_cfg.get("max_retries", 3))
                 if dc_res.success:
                     delivered = True
                 else:
@@ -427,7 +497,7 @@ def main():
                 else:
                     errors.append(f"Telegram: {tg_res.error}")
             if discord_enabled:
-                dc_res = send_discord_message(os.getenv("DISCORD_WEBHOOK_URL", "").strip(), text, max_retries=notification_cfg.get("max_retries", 3))
+                dc_res = dispatch_discord_message(text, report_type="event", max_retries=notification_cfg.get("max_retries", 3))
                 if dc_res.success:
                     delivered = True
                 else:
@@ -539,6 +609,28 @@ def main():
     watchlist_results = analyze_watchlist(records, watchlist_items)
     if config.get("notification", {}).get("send_daily_margin", True):
         watchlist_results = add_margin_data(watchlist_results, get_margin_balances(trade_date))
+    if config.get("notification", {}).get("send_big_order_flow", True):
+        try:
+            big_cfg = config.get("big_order_settings", {})
+            big_orders = fetch_big_order_flow(
+                [item["code"] for item in watchlist_results],
+                trade_date,
+                price_tiers=big_cfg.get("price_tiers"),
+            )
+            if big_orders:
+                watchlist_results = add_big_order_data(watchlist_results, big_orders)
+        except Exception as e:
+            logger.warning("抓取大戶大單買賣力道失敗：%s", e)
+    if config.get("notification", {}).get("send_broker_branch_chip", True):
+        try:
+            broker_chips = fetch_watchlist_broker_chips(
+                [item["code"] for item in watchlist_results],
+                trade_date,
+            )
+            if broker_chips:
+                watchlist_results = add_broker_chip_data(watchlist_results, broker_chips)
+        except Exception as e:
+            logger.warning("抓取券商主力分點買賣超失敗：%s", e)
     disposition_periods = get_active_disposition_periods({item["code"] for item in watchlist_results})
     for item in watchlist_results:
         if period := disposition_periods.get(item["code"]):

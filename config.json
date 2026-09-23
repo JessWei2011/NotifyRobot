@@ -25,11 +25,21 @@
     "send_morning_calendar": true,
     "send_big_holder_report": true,
     "send_daily_margin": true,
+    "send_big_order_flow": true,
+    "send_broker_branch_chip": true,
     "send_watchlist": true,
     "send_screener": true,
     "enable_ack_button": false,
     "max_retries": 3,
     "send_discord_heartbeat": true
+  },
+  "big_order_settings": {
+    "price_tiers": [
+      { "min_price": 1000, "threshold_amount_wan": 1000 },
+      { "min_price": 500,  "threshold_amount_wan": 500 },
+      { "min_price": 100,  "threshold_amount_wan": 300 },
+      { "min_price": 0,    "threshold_amount_wan": 100 }
+    ]
   },
   "discord_heartbeat": {
     "enabled": true,

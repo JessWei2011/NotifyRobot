@@ -4,9 +4,9 @@
 
 每日 08:00 至 23:59，程式每 10 分鐘檢查一次自選股的重大訊息、注意股票與處置資訊；新公告、處置開始與結束都會個別推送。
 
-每週六 09:30 另推送一次集保大戶籌碼週報：400–999 張與 1,000 張以上的持股比例、戶數與週變化。每日 20:30 的自選股報告則會附上當日融資餘額、增減張數及增減率。
+每週六 09:30 另推送一次集保大戶籌碼週報：400–999 張與 1,000 張以上的持股比例、戶數與週變化。每日 20:30 的自選股報告則會附上當日盤中大戶大單力道（買賣超張數與佔比）及融資餘額、增減張數與增減率。
 
-若在 `.env` 設定 `DISCORD_WEBHOOK_URL`，上述通知會同步發送至指定 Discord 頻道。可用 `python3 main.py --test-discord` 只發送 Discord 連線測試。
+若在 `.env` 設定 `DISCORD_BOT_TOKEN`、`DISCORD_CHANNEL_ID`（#台股通知）與 `DISCORD_CHIP_CHANNEL_ID`（#籌碼資料），通知將自動分流：自選股、重大訊息、行事曆、大戶週報與大盤金額推送到台股通知頻道，三大法人買賣超榜單與連買策略則推送到籌碼資料頻道。亦可使用舊版 `DISCORD_WEBHOOK_URL` 進行單一 Webhook 推播。可用 `python3 main.py --test-discord` 進行 Discord 連線測試。
 
 若要自動同步永豐 Shioaji 的非 ETF 持股，請在 NotifyRobot 的 `.env` 設定 `SJ_ENV_FILE` 指向已驗證可用的 Shioaji `.env`。程式只讀取持股，不會啟用憑證或下單；指定的憑證檔優先於 NotifyRobot 內舊的 Shioaji 變數。
 

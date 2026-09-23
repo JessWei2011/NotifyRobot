@@ -52,6 +52,20 @@ def add_margin_data(items: List[Dict[str, Any]], margin_balances: Dict[str, Dict
         item.update(margin_balances.get(item["code"], {}))
     return items
 
+
+def add_big_order_data(items: List[Dict[str, Any]], big_orders: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """將當日大戶大單買賣力道附加至自選股結果。"""
+    for item in items:
+        item.update(big_orders.get(item["code"], {}))
+    return items
+
+
+def add_broker_chip_data(items: List[Dict[str, Any]], broker_chips: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """將當日券商主力分點買賣超資料附加至自選股結果。"""
+    for item in items:
+        item.update(broker_chips.get(item["code"], {}))
+    return items
+
 def filter_dual_buyers(records: List[Dict[str, Any]], top_n: int = 10, min_lots: int = 300) -> List[Dict[str, Any]]:
     """
     策略一：外資與投信同步買超 (土洋同步作多)

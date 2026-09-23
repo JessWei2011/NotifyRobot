@@ -1,8 +1,11 @@
+import concurrent.futures
 import datetime
 import logging
+import re
 import requests
 import time
 import certifi
+from bs4 import BeautifulSoup
 from typing import Optional, Tuple, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -333,3 +336,131 @@ def get_margin_balances(date_str: str) -> Dict[str, Dict[str, Any]]:
         values["margin_change"] = current - previous
         values["margin_change_rate"] = (current - previous) / previous * 100 if previous else None
     return balances
+
+
+def _clean_broker_name(name: str) -> str:
+    """清理券商名稱前贅詞與後綴"""
+    cleaned = re.sub(r"^(美商|港商|新加坡商|法商|香港上海|瑞士信貸|台灣|大和)", "", name)
+    cleaned = re.sub(r"證券$", "", cleaned)
+    return cleaned.strip() or name
+
+
+def fetch_broker_branch_chips(code: str, target_date: str = "") -> Optional[Dict[str, Any]]:
+    """抓取單一個股券商分點主力買賣超（買超前15名 vs 賣超前15名合計）"""
+    urls = [
+        f"https://concords.moneydj.com/z/zc/zco/zco.djhtm?a={code}",
+        f"https://moneydj.emega.com.tw/jsdata/z/zc/zco/zco.djhtm?a={code}",
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    target_formatted = ""
+    if target_date:
+        if len(target_date) == 8 and target_date.isdigit():
+            target_formatted = f"{target_date[:4]}/{target_date[4:6]}/{target_date[6:8]}"
+        else:
+            target_formatted = target_date
+
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                continue
+            resp.encoding = "big5"
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # 檢查更新日期
+            date_match = re.search(r"最後更新日：(\d{4}/\d{2}/\d{2})", soup.get_text())
+            report_date = date_match.group(1) if date_match else ""
+            if target_formatted and report_date and report_date != target_formatted:
+                logger.debug(f"[{code}] 券商分點最後更新日為 {report_date}，尚未更新至 {target_formatted}")
+                return None
+
+            top_buyers, top_sellers = [], []
+            total_buy, total_sell = 0, 0
+            buy_pct_sum, sell_pct_sum = 0.0, 0.0
+
+            for t in soup.find_all("table"):
+                text = t.get_text()
+                if "合計買超張數" in text and "合計賣超張數" in text:
+                    for r in t.find_all("tr"):
+                        cols = [td.get_text(strip=True).replace(",", "") for td in r.find_all(["td", "th"])]
+                        if len(cols) >= 10:
+                            b_name, b_net = cols[0], cols[3]
+                            s_name, s_net = cols[5], cols[8]
+                            if (
+                                len(top_buyers) < 2
+                                and b_name
+                                and b_name not in ("買超券商", "合計買超張數")
+                                and b_net.lstrip("-").isdigit()
+                                and int(b_net) > 0
+                            ):
+                                clean_b = _clean_broker_name(b_name)
+                                top_buyers.append(f"{clean_b}+{int(b_net):,}")
+                            if (
+                                len(top_sellers) < 2
+                                and s_name
+                                and s_name not in ("賣超券商", "合計賣超張數")
+                                and s_net.lstrip("-").isdigit()
+                                and int(s_net) > 0
+                            ):
+                                clean_s = _clean_broker_name(s_name)
+                                top_sellers.append(f"{clean_s}-{int(s_net):,}")
+
+                            if cols[4].endswith("%"):
+                                try:
+                                    buy_pct_sum += float(cols[4].rstrip("%"))
+                                except ValueError:
+                                    pass
+                            if cols[9].endswith("%"):
+                                try:
+                                    sell_pct_sum += float(cols[9].rstrip("%"))
+                                except ValueError:
+                                    pass
+
+                        for i, c in enumerate(cols):
+                            if "合計買超張數" in c and i + 1 < len(cols) and cols[i + 1].isdigit():
+                                total_buy = int(cols[i + 1])
+                            if "合計賣超張數" in c and i + 1 < len(cols) and cols[i + 1].isdigit():
+                                total_sell = int(cols[i + 1])
+                    break
+
+            if total_buy > 0 or total_sell > 0:
+                concentration = round(buy_pct_sum - sell_pct_sum, 1) if (buy_pct_sum or sell_pct_sum) else None
+                return {
+                    "broker_buy_lots": total_buy,
+                    "broker_sell_lots": total_sell,
+                    "broker_net_lots": total_buy - total_sell,
+                    "top_buyers": top_buyers,
+                    "top_sellers": top_sellers,
+                    "broker_concentration": concentration,
+                    "broker_report_date": report_date,
+                }
+        except Exception as exc:
+            logger.debug(f"[{code}] 抓取券商分點失敗 ({url}): {exc}")
+            continue
+
+    return None
+
+
+def fetch_watchlist_broker_chips(codes: List[str], target_date: str = "") -> Dict[str, Dict[str, Any]]:
+    """平行抓取自選股清單之券商分點主力買賣超資料"""
+    results: Dict[str, Dict[str, Any]] = {}
+    if not codes:
+        return results
+
+    def _worker(c: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+        return c, fetch_broker_branch_chips(c, target_date)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(codes))) as executor:
+        future_map = {executor.submit(_worker, code): code for code in codes}
+        for future in concurrent.futures.as_completed(future_map):
+            try:
+                code, data = future.result()
+                if data:
+                    results[code] = data
+            except Exception as e:
+                logger.warning(f"解析 {future_map[future]} 券商分點失敗: {e}")
+
+    return results
+
