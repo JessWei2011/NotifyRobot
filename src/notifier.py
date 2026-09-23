@@ -225,7 +225,7 @@ def format_screener_message(
     show_dual_buyers: bool = True,
     show_it_buyers: bool = True,
 ) -> str:
-    """產出市場策略篩選推播訊息文字"""
+    """產出市場策略篩選推播訊息文字（相容舊版單則格式）"""
     lines = [
         f"🎯 *【盤後籌碼策略篩選榜】*",
         f"📅 日期：`{date_str}`",
@@ -261,6 +261,173 @@ def format_screener_message(
                 lines.append(f"{idx}. *{code} {name}*：`+{t_lots:,}` 張")
 
     lines.append("──────────────────────")
+    return "\n".join(lines)
+
+
+def format_daily_buyers_message(
+    date_str: str,
+    total_buyers: List[Dict[str, Any]],
+    dual_buyers: List[Dict[str, Any]],
+    foreign_buyers: List[Dict[str, Any]],
+    it_buyers: List[Dict[str, Any]],
+) -> str:
+    lines = [
+        "📊 *【盤後籌碼榜｜單日買超強勢】*",
+        f"📅 日期：`{date_str}`",
+        "──────────────────────",
+        "👑 *三大法人合計買超 Top 10*",
+    ]
+    if not total_buyers:
+        lines.append("   無資料")
+    else:
+        for idx, item in enumerate(total_buyers, 1):
+            f_lots = item.get("foreign_lots", 0)
+            t_lots = item.get("trust_lots", 0)
+            d_lots = item.get("dealer_lots", 0)
+            lines.append(
+                f"{idx}. *{item['code']} {item['name']}*：`+{item['total_lots']:,}` 張 "
+                f"(外 `{f_lots:+,}`｜投 `{t_lots:+,}`｜自 `{d_lots:+,}`)"
+            )
+
+    lines.extend([
+        "──────────────────────",
+        "🔥 *外資＋投信買超 Top 10*",
+    ])
+    if not dual_buyers:
+        lines.append("   無資料")
+    else:
+        for idx, item in enumerate(dual_buyers, 1):
+            f_lots = item.get("foreign_lots", 0)
+            t_lots = item.get("trust_lots", 0)
+            lines.append(
+                f"{idx}. *{item['code']} {item['name']}*：`+{item['dual_total']:,}` 張 "
+                f"(外 `{f_lots:+,}`｜投 `{t_lots:+,}`)"
+            )
+
+    lines.extend([
+        "──────────────────────",
+        "🦅 *外資買超 Top 10*",
+    ])
+    if not foreign_buyers:
+        lines.append("   無資料")
+    else:
+        for idx, item in enumerate(foreign_buyers, 1):
+            lines.append(f"{idx}. *{item['code']} {item['name']}*：`+{item['foreign_lots']:,}` 張")
+
+    lines.extend([
+        "──────────────────────",
+        "💎 *投信買超 Top 10*",
+    ])
+    if not it_buyers:
+        lines.append("   無資料")
+    else:
+        for idx, item in enumerate(it_buyers, 1):
+            lines.append(f"{idx}. *{item['code']} {item['name']}*：`+{item['trust_lots']:,}` 張")
+
+    lines.append("──────────────────────")
+    return "\n".join(lines)
+
+
+def format_daily_sellers_message(
+    date_str: str,
+    dual_sellers: List[Dict[str, Any]],
+    foreign_sellers: List[Dict[str, Any]],
+    it_sellers: List[Dict[str, Any]],
+) -> str:
+    lines = [
+        "⚠️ *【盤後籌碼榜｜單日賣超警示】*",
+        f"📅 日期：`{date_str}`",
+        "──────────────────────",
+        "💥 *外資＋投信賣超 Top 10*",
+    ]
+    if not dual_sellers:
+        lines.append("   無資料")
+    else:
+        for idx, item in enumerate(dual_sellers, 1):
+            f_lots = item.get("foreign_lots", 0)
+            t_lots = item.get("trust_lots", 0)
+            lines.append(
+                f"{idx}. *{item['code']} {item['name']}*：`{item['dual_total']:,}` 張 "
+                f"(外 `{f_lots:+,}`｜投 `{t_lots:+,}`)"
+            )
+
+    lines.extend([
+        "──────────────────────",
+        "🔴 *外資賣超 Top 10*",
+    ])
+    if not foreign_sellers:
+        lines.append("   無資料")
+    else:
+        for idx, item in enumerate(foreign_sellers, 1):
+            lines.append(f"{idx}. *{item['code']} {item['name']}*：`{item['foreign_lots']:,}` 張")
+
+    lines.extend([
+        "──────────────────────",
+        "🔻 *投信賣超 Top 10*",
+    ])
+    if not it_sellers:
+        lines.append("   無資料")
+    else:
+        for idx, item in enumerate(it_sellers, 1):
+            lines.append(f"{idx}. *{item['code']} {item['name']}*：`{item['trust_lots']:,}` 張")
+
+    lines.append("──────────────────────")
+    return "\n".join(lines)
+
+
+def format_consecutive_buyers_message(
+    date_str: str,
+    dual_consecutive: List[Dict[str, Any]],
+    foreign_consecutive: List[Dict[str, Any]],
+    it_consecutive: List[Dict[str, Any]],
+) -> str:
+    lines = [
+        "🌊 *【盤後籌碼榜｜波段連續買超】*",
+        f"📅 日期：`{date_str}`（篩選門檻：連續買超 ≥ 5 天）",
+        "──────────────────────",
+        "⚡ *外資 & 投信雙連買 Top 10*",
+    ]
+    if not dual_consecutive:
+        lines.append("   無符合條件之標的")
+    else:
+        for idx, item in enumerate(dual_consecutive, 1):
+            lines.append(
+                f"{idx}. 🔷 **{item['code']} {item['name']}**\n"
+                f"   • 外資連 `{item['foreign_days']}` 天（累計 `+{item['foreign_accum']:,}` 張）\n"
+                f"   • 投信連 `{item['trust_days']}` 天（累計 `+{item['trust_accum']:,}` 張）\n"
+                f"   • 雙法人合計累計 `+{item['total_accum']:,}` 張"
+            )
+
+    lines.extend([
+        "──────────────────────",
+        "🦅 *外資連續買超 Top 10*",
+    ])
+    if not foreign_consecutive:
+        lines.append("   無符合條件之標的")
+    else:
+        for idx, item in enumerate(foreign_consecutive, 1):
+            lines.append(
+                f"{idx}. 🔷 **{item['code']} {item['name']}**｜"
+                f"連 `{item['days']}` 天｜累計 `+{item['accum_lots']:,}` 張（今日 `+{item['today_lots']:,}`）"
+            )
+
+    lines.extend([
+        "──────────────────────",
+        "💎 *投信連續買超 Top 10*",
+    ])
+    if not it_consecutive:
+        lines.append("   無符合條件之標的")
+    else:
+        for idx, item in enumerate(it_consecutive, 1):
+            lines.append(
+                f"{idx}. 🔷 **{item['code']} {item['name']}**｜"
+                f"連 `{item['days']}` 天｜累計 `+{item['accum_lots']:,}` 張（今日 `+{item['today_lots']:,}`）"
+            )
+
+    lines.extend([
+        "──────────────────────",
+        "💡 排序規則：天數越多名次越高；天數相同時依期間累計買超張數排序。",
+    ])
     return "\n".join(lines)
 
 def send_telegram_message(

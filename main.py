@@ -47,12 +47,33 @@ def load_simple_env(env_path: Path):
 load_simple_env(BASE_DIR / ".env")
 
 # 引入內部模組
-from src.fetcher import fetch_company_name_map, get_latest_institutional_data, get_latest_market_institutional_amounts, get_margin_balances
-from src.analyzer import add_margin_data, analyze_watchlist, filter_dual_buyers, filter_it_top_buyers
+from src.fetcher import (
+    ensure_chip_history,
+    fetch_company_name_map,
+    get_latest_institutional_data,
+    get_latest_market_institutional_amounts,
+    get_margin_balances,
+)
+from src.analyzer import (
+    add_margin_data,
+    analyze_watchlist,
+    calculate_consecutive_buyers,
+    filter_dual_buyers,
+    filter_dual_top_buyers,
+    filter_dual_top_sellers,
+    filter_foreign_top_buyers,
+    filter_foreign_top_sellers,
+    filter_it_top_buyers,
+    filter_it_top_sellers,
+    filter_total_top_buyers,
+)
 from src.notifier import (
     answer_callback_query,
-    format_market_institutional_amount_message,
     format_big_holder_message,
+    format_consecutive_buyers_message,
+    format_daily_buyers_message,
+    format_daily_sellers_message,
+    format_market_institutional_amount_message,
     format_screener_message,
     format_watchlist_message,
     get_updates,
@@ -523,37 +544,57 @@ def main():
             item["disposition_period"] = period
     watchlist_msg = format_watchlist_message(trade_date, watchlist_results)
 
-    # 3. 策略選股分析
+    # 3. 籌碼歷史快取與波段資料維護
+    state = NotificationState(BASE_DIR / "data" / "notification_state.sqlite3")
+    state.save_daily_chip_records(trade_date, records)
+    history_dates = ensure_chip_history(state, trade_date, days_needed=15)
+    history_by_code = state.get_chip_history_for_dates(history_dates)
+    state.cleanup_old_chip_history(keep_days=30)
+
+    # 4. 策略榜單分析（單日買超、單日賣超、波段連買）
     screener_cfg = config.get("screener", {})
     top_n = screener_cfg.get("top_n", 10)
-    min_lots = screener_cfg.get("min_lots", 300)
 
-    dual_buyers = (
-        filter_dual_buyers(records, top_n=top_n, min_lots=min_lots)
-        if screener_cfg.get("enable_dual_buyers", True) else []
-    )
-    it_buyers = (
-        filter_it_top_buyers(records, top_n=top_n)
-        if screener_cfg.get("enable_it_top", True) else []
-    )
-    screener_msg = format_screener_message(
+    # 單日買超
+    total_buyers = filter_total_top_buyers(records, top_n=top_n)
+    dual_buyers = filter_dual_top_buyers(records, top_n=top_n)
+    foreign_buyers = filter_foreign_top_buyers(records, top_n=top_n)
+    it_buyers = filter_it_top_buyers(records, top_n=top_n)
+    daily_buyers_msg = format_daily_buyers_message(trade_date, total_buyers, dual_buyers, foreign_buyers, it_buyers)
+
+    # 單日賣超
+    dual_sellers = filter_dual_top_sellers(records, top_n=top_n)
+    foreign_sellers = filter_foreign_top_sellers(records, top_n=top_n)
+    it_sellers = filter_it_top_sellers(records, top_n=top_n)
+    daily_sellers_msg = format_daily_sellers_message(trade_date, dual_sellers, foreign_sellers, it_sellers)
+
+    # 波段連續買超 (>= 5 天)
+    consecutive_data = calculate_consecutive_buyers(history_by_code, min_days=5, top_n=top_n)
+    consecutive_msg = format_consecutive_buyers_message(
         trade_date,
-        dual_buyers,
-        it_buyers,
-        show_dual_buyers=screener_cfg.get("enable_dual_buyers", True),
-        show_it_buyers=screener_cfg.get("enable_it_top", True),
+        consecutive_data["dual"],
+        consecutive_data["foreign"],
+        consecutive_data["trust"],
     )
 
-    # 4. 輸出或推播
+    # 5. 輸出或推播
     if args.dry_run:
         print("\n" + "=" * 50)
         print("🔍 【Dry Run 預覽：自選股訊息】")
         print("=" * 50)
         print(watchlist_msg)
         print("\n" + "=" * 50)
-        print("🔍 【Dry Run 預覽：策略選股訊息】")
+        print("🔍 【Dry Run 預覽：單日法人買超強勢榜】")
         print("=" * 50)
-        print(screener_msg)
+        print(daily_buyers_msg)
+        print("\n" + "=" * 50)
+        print("🔍 【Dry Run 預覽：單日法人賣超警示榜】")
+        print("=" * 50)
+        print(daily_sellers_msg)
+        print("\n" + "=" * 50)
+        print("🔍 【Dry Run 預覽：波段連續買超榜】")
+        print("=" * 50)
+        print(consecutive_msg)
         print("=" * 50 + "\n")
         logger.info("Dry run 執行完畢，未發送推播。")
         return 0
@@ -571,19 +612,23 @@ def main():
     notification_cfg = config.get("notification", {})
     enable_ack_button = notification_cfg.get("enable_ack_button", True)
     max_retries = notification_cfg.get("max_retries", 3)
-    state = NotificationState(BASE_DIR / "data" / "notification_state.sqlite3")
     sent_ok = True
 
     # 發送自選股
     if notification_cfg.get("send_watchlist", True):
-        logger.info("正在推送自選股分析報告至 Telegram...")
+        logger.info("正在推送自選股分析報告...")
         sent_ok &= send_report(token, chat_id, trade_date, "watchlist", watchlist_msg, state, args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled)
 
-    # 發送策略選股
+    # 發送策略選股（分 3 則獨立發送）
     if notification_cfg.get("send_screener", True):
-        logger.info("正在推送籌碼策略榜單至 Telegram...")
-        if screener_cfg.get("enable_dual_buyers", True) or screener_cfg.get("enable_it_top", True):
-            sent_ok &= send_report(token, chat_id, trade_date, "screener", screener_msg, state, args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled)
+        logger.info("正在推送單日法人買超強勢榜...")
+        sent_ok &= send_report(token, chat_id, trade_date, "screener_buyers", daily_buyers_msg, state, args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled)
+
+        logger.info("正在推送單日法人賣超警示榜...")
+        sent_ok &= send_report(token, chat_id, trade_date, "screener_sellers", daily_sellers_msg, state, args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled)
+
+        logger.info("正在推送波段連續買超榜...")
+        sent_ok &= send_report(token, chat_id, trade_date, "screener_consecutive", consecutive_msg, state, args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled)
 
     if not sent_ok:
         logger.error("=== 部分或全部推播失敗 ===")

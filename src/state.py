@@ -53,6 +53,26 @@ class NotificationState:
             )
             """
         )
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS daily_chip_history (
+                trade_date TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                foreign_lots INTEGER NOT NULL,
+                trust_lots INTEGER NOT NULL,
+                dealer_lots INTEGER NOT NULL,
+                total_lots INTEGER NOT NULL,
+                PRIMARY KEY (trade_date, code)
+            )
+            """
+        )
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chip_history_code ON daily_chip_history (code)"
+        )
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chip_history_date ON daily_chip_history (trade_date)"
+        )
         self.connection.commit()
 
     def close(self) -> None:
@@ -175,6 +195,78 @@ class NotificationState:
             (f"market_amount_status_{trade_date}",),
         ).fetchone()
         return row[0] if row else None
+
+    def save_daily_chip_records(self, trade_date: str, records: list[Dict[str, Any]]) -> None:
+        """批次寫入或更新當日全市場籌碼紀錄"""
+        if not records:
+            return
+        data = [
+            (
+                trade_date,
+                str(r["code"]).strip(),
+                str(r.get("name", "")).strip(),
+                int(r.get("foreign_lots", 0)),
+                int(r.get("trust_lots", 0)),
+                int(r.get("dealer_lots", 0)),
+                int(r.get("total_lots", 0)),
+            )
+            for r in records
+        ]
+        self.connection.executemany(
+            """
+            INSERT OR REPLACE INTO daily_chip_history
+                (trade_date, code, name, foreign_lots, trust_lots, dealer_lots, total_lots)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            data,
+        )
+        self.connection.commit()
+
+    def get_recorded_trade_dates(self) -> list[str]:
+        """回傳目前已快取的交易日清單（由舊至新）"""
+        rows = self.connection.execute(
+            "SELECT DISTINCT trade_date FROM daily_chip_history ORDER BY trade_date ASC"
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def get_chip_history_for_dates(self, dates: list[str]) -> Dict[str, list[Dict[str, Any]]]:
+        """取得指定交易日清單中，所有股票依日期由舊至新排列的籌碼紀錄"""
+        if not dates:
+            return {}
+        placeholders = ",".join("?" for _ in dates)
+        rows = self.connection.execute(
+            f"""
+            SELECT code, name, trade_date, foreign_lots, trust_lots, dealer_lots, total_lots
+            FROM daily_chip_history
+            WHERE trade_date IN ({placeholders})
+            ORDER BY trade_date ASC
+            """,
+            dates,
+        ).fetchall()
+        history: Dict[str, list[Dict[str, Any]]] = {}
+        for code, name, t_date, f_lots, t_lots, d_lots, tot_lots in rows:
+            if code not in history:
+                history[code] = []
+            history[code].append({
+                "trade_date": t_date,
+                "name": name,
+                "foreign_lots": f_lots,
+                "trust_lots": t_lots,
+                "dealer_lots": d_lots,
+                "total_lots": tot_lots,
+            })
+        return history
+
+    def cleanup_old_chip_history(self, keep_days: int = 30) -> None:
+        """只保留最近 keep_days 個交易日的快取，過期自動清理"""
+        dates = self.get_recorded_trade_dates()
+        if len(dates) > keep_days:
+            cutoff = dates[-keep_days]
+            self.connection.execute(
+                "DELETE FROM daily_chip_history WHERE trade_date < ?",
+                (cutoff,),
+            )
+            self.connection.commit()
 
 
 def _now() -> str:

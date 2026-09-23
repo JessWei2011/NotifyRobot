@@ -240,6 +240,47 @@ def get_latest_institutional_data(target_date: Optional[str] = None) -> Tuple[st
     raise RuntimeError("無法獲取最近一週之三大法人籌碼資料，請稍後再試。")
 
 
+def ensure_chip_history(state: Any, latest_date: str, days_needed: int = 15) -> List[str]:
+    """確保 SQLite 快取中包含至少 days_needed 個歷史交易日資料。"""
+    try:
+        latest = datetime.datetime.strptime(latest_date, "%Y%m%d").date()
+    except ValueError:
+        latest = datetime.date.today()
+
+    recorded = set(state.get_recorded_trade_dates())
+    found_dates = sorted([d for d in recorded if d <= latest_date], reverse=True)
+
+    if len(found_dates) >= days_needed:
+        return sorted(found_dates[:days_needed])
+
+    logger.info("歷史籌碼快取不足（現有 %s 天，需求 %s 天），開始回補近期交易日...", len(found_dates), days_needed)
+
+    candidate = latest
+    for _ in range(45):
+        if len(found_dates) >= days_needed:
+            break
+        candidate -= datetime.timedelta(days=1)
+        if candidate.weekday() >= 5:
+            continue
+        date_str = candidate.strftime("%Y%m%d")
+        if date_str in recorded:
+            if date_str not in found_dates:
+                found_dates.append(date_str)
+            continue
+
+        twse_records = fetch_twse_t86_for_date(date_str)
+        tpex_records = fetch_tpex_t86_for_date(date_str)
+        records = (twse_records or []) + (tpex_records or [])
+        if records:
+            state.save_daily_chip_records(date_str, records)
+            recorded.add(date_str)
+            found_dates.append(date_str)
+            logger.info("已成功回補歷史交易日 [%s] 籌碼資料（共 %s 檔）", date_str, len(records))
+        time.sleep(0.3)
+
+    return sorted(found_dates[:days_needed])
+
+
 def fetch_company_name_map() -> Dict[str, str]:
     """以交易所公開基本資料取得上市、上櫃股票的中文簡稱。"""
     sources = (

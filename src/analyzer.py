@@ -81,17 +81,141 @@ def filter_dual_buyers(records: List[Dict[str, Any]], top_n: int = 10, min_lots:
     candidates.sort(key=lambda x: x["dual_total"], reverse=True)
     return candidates[:top_n]
 
+def filter_total_top_buyers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
+    """三大法人合計買超 TOP N"""
+    candidates = [r for r in records if is_common_stock(r["code"]) and r["total_lots"] > 0]
+    candidates.sort(key=lambda x: x["total_lots"], reverse=True)
+    return candidates[:top_n]
+
+def filter_dual_top_buyers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
+    """外資 + 投信買超合計 TOP N"""
+    candidates = []
+    for r in records:
+        if not is_common_stock(r["code"]):
+            continue
+        dual_total = r["foreign_lots"] + r["trust_lots"]
+        if dual_total > 0:
+            candidates.append({**r, "dual_total": dual_total})
+    candidates.sort(key=lambda x: x["dual_total"], reverse=True)
+    return candidates[:top_n]
+
+def filter_foreign_top_buyers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
+    """外資買超 TOP N"""
+    candidates = [r for r in records if is_common_stock(r["code"]) and r["foreign_lots"] > 0]
+    candidates.sort(key=lambda x: x["foreign_lots"], reverse=True)
+    return candidates[:top_n]
+
 def filter_it_top_buyers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
-    """
-    策略二：投信買超前 N 大強勢股
-    條件：
-    1. 投信買超張數 > 0
-    2. 優先挑選 4 位數之普通股
-    3. 依投信買超張數由大到小排序
-    """
+    """投信買超 TOP N"""
     candidates = [
         r for r in records 
         if is_common_stock(r["code"]) and r["trust_lots"] > 0
     ]
     candidates.sort(key=lambda x: x["trust_lots"], reverse=True)
     return candidates[:top_n]
+
+def filter_dual_top_sellers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
+    """外資 + 投信賣超合計 TOP N（賣超最多排最前）"""
+    candidates = []
+    for r in records:
+        if not is_common_stock(r["code"]):
+            continue
+        dual_total = r["foreign_lots"] + r["trust_lots"]
+        if dual_total < 0:
+            candidates.append({**r, "dual_total": dual_total})
+    candidates.sort(key=lambda x: x["dual_total"])
+    return candidates[:top_n]
+
+def filter_foreign_top_sellers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
+    """外資賣超 TOP N（賣超最多排最前）"""
+    candidates = [r for r in records if is_common_stock(r["code"]) and r["foreign_lots"] < 0]
+    candidates.sort(key=lambda x: x["foreign_lots"])
+    return candidates[:top_n]
+
+def filter_it_top_sellers(records: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
+    """投信賣超 TOP N（賣超最多排最前）"""
+    candidates = [r for r in records if is_common_stock(r["code"]) and r["trust_lots"] < 0]
+    candidates.sort(key=lambda x: x["trust_lots"])
+    return candidates[:top_n]
+
+
+def _get_streak(series: List[Dict[str, Any]], key: str) -> tuple[int, int]:
+    """由最新交易日往回推算連續買超天數與期間累積買超張數。"""
+    streak = 0
+    accum_lots = 0
+    for item in reversed(series):
+        lots = item.get(key, 0)
+        if lots > 0:
+            streak += 1
+            accum_lots += lots
+        else:
+            break
+    return streak, accum_lots
+
+
+def calculate_consecutive_buyers(
+    history_by_code: Dict[str, List[Dict[str, Any]]],
+    min_days: int = 5,
+    top_n: int = 10,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    計算外資、投信與外資+投信雙連買 >= min_days 的前 top_n 名。
+    天數越多名次越高；天數相同時依累積買超張數降序排列。
+    """
+    foreign_list = []
+    trust_list = []
+    dual_list = []
+
+    for code, series in history_by_code.items():
+        if not is_common_stock(code) or not series:
+            continue
+        name = series[-1].get("name", code)
+        today_record = series[-1]
+
+        f_days, f_accum = _get_streak(series, "foreign_lots")
+        t_days, t_accum = _get_streak(series, "trust_lots")
+
+        if f_days >= min_days:
+            foreign_list.append({
+                "code": code,
+                "name": name,
+                "days": f_days,
+                "accum_lots": f_accum,
+                "today_lots": today_record.get("foreign_lots", 0),
+            })
+
+        if t_days >= min_days:
+            trust_list.append({
+                "code": code,
+                "name": name,
+                "days": t_days,
+                "accum_lots": t_accum,
+                "today_lots": today_record.get("trust_lots", 0),
+            })
+
+        if f_days >= min_days and t_days >= min_days:
+            min_days_both = min(f_days, t_days)
+            dual_list.append({
+                "code": code,
+                "name": name,
+                "foreign_days": f_days,
+                "trust_days": t_days,
+                "dual_days": min_days_both,
+                "foreign_accum": f_accum,
+                "trust_accum": t_accum,
+                "total_accum": f_accum + t_accum,
+                "today_foreign": today_record.get("foreign_lots", 0),
+                "today_trust": today_record.get("trust_lots", 0),
+            })
+
+    # 排序：天數越多越優先，天數相同時累積張數多者優先
+    foreign_list.sort(key=lambda x: (x["days"], x["accum_lots"]), reverse=True)
+    trust_list.sort(key=lambda x: (x["days"], x["accum_lots"]), reverse=True)
+    dual_list.sort(key=lambda x: (x["dual_days"], x["foreign_days"] + x["trust_days"], x["total_accum"]), reverse=True)
+
+    return {
+        "foreign": foreign_list[:top_n],
+        "trust": trust_list[:top_n],
+        "dual": dual_list[:top_n],
+    }
+
