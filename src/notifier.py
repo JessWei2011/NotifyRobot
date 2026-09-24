@@ -86,11 +86,11 @@ def send_discord_message(
     return SendResult(False, error="retry loop exited unexpectedly")
 
 def _format_num(lots: int) -> str:
-    """格式化買賣超張數，附帶正負號與顏色指示符號"""
+    """格式化買賣超張數，附帶正負號與台股顏色指示符號（正紅、負綠、平白）"""
     if lots > 0:
-        return f"+{lots:,} 張 🟢"
+        return f"+{lots:,} 張 🔴"
     elif lots < 0:
-        return f"{lots:,} 張 🔴"
+        return f"{lots:,} 張 🟢"
     else:
         return "0 張 ⚪"
 
@@ -106,7 +106,8 @@ def format_market_institutional_message(date_str: str, summary: Dict[str, int]) 
     for label, key in (("外資", "foreign"), ("投信", "trust"), ("自營商", "dealer"), ("三大法人合計", "total")):
         lots = summary[key]
         direction = "買超" if lots > 0 else "賣超" if lots < 0 else "持平"
-        lines.append(f"📌 *{label}*：{direction} `{lots:+,} 張`")
+        icon = "🔴" if lots > 0 else "🟢" if lots < 0 else "⚪"
+        lines.append(f"{icon} *{label}*：{direction} `{lots:+,} 張`")
     lines.extend([
         "──────────────────────",
         "💡 資料範圍：上市與上櫃股票；自營商含自行買賣與避險。",
@@ -133,25 +134,17 @@ def format_market_institutional_amount_message(
         "──────────────────────",
     ]
 
-    # 外資
-    f_amt = summary.get("foreign", 0)
-    f_dir = "買超" if f_amt > 0 else "賣超" if f_amt < 0 else "持平"
-    lines.append(f"📌 *外資*：{f_dir} `{f_amt / 100_000_000:+,.1f} 億`")
+    items = [
+        ("外資", summary.get("foreign", 0)),
+        ("投信", summary.get("trust", 0)),
+        ("自營商（自行買賣）", summary.get("dealer", 0)),
+        ("三大法人合計", summary.get("total", 0)),
+    ]
 
-    # 投信
-    t_amt = summary.get("trust", 0)
-    t_dir = "買超" if t_amt > 0 else "賣超" if t_amt < 0 else "持平"
-    lines.append(f"📌 *投信*：{t_dir} `{t_amt / 100_000_000:+,.1f} 億`")
-
-    # 自營商（自行買賣）
-    d_amt = summary.get("dealer", 0)
-    d_dir = "買超" if d_amt > 0 else "賣超" if d_amt < 0 else "持平"
-    lines.append(f"📌 *自營商（自行買賣）*：{d_dir} `{d_amt / 100_000_000:+,.1f} 億`")
-
-    # 三大法人合計（外資 + 投信 + 自營自行買賣）
-    tot_amt = summary.get("total", 0)
-    tot_dir = "買超" if tot_amt > 0 else "賣超" if tot_amt < 0 else "持平"
-    lines.append(f"📌 *三大法人合計*：{tot_dir} `{tot_amt / 100_000_000:+,.1f} 億`")
+    for label, amt in items:
+        direction = "買超" if amt > 0 else "賣超" if amt < 0 else "持平"
+        icon = "🔴" if amt > 0 else "🟢" if amt < 0 else "⚪"
+        lines.append(f"{icon} *{label}*：{direction} `{amt / 100_000_000:+,.1f} 億`")
 
     return "\n".join(lines)
 
@@ -203,7 +196,7 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
                 if conc >= 15.0:
                     flow_desc = f"集中度 `{conc:+.1f}%` 🔥 主力強力吸籌，籌碼高度集中"
                 elif conc >= 5.0:
-                    flow_desc = f"集中度 `{conc:+.1f}%` 🟢 主力偏多吸籌，籌碼趨向集中"
+                    flow_desc = f"集中度 `{conc:+.1f}%` 🔴 主力偏多吸籌，籌碼趨向集中"
                 elif conc > -5.0:
                     flow_desc = f"集中度 `{conc:+.1f}%` ⚖️ 主力多空拉鋸，籌碼中性平衡"
                 elif conc > -15.0:
@@ -417,7 +410,7 @@ def format_daily_sellers_message(
 
     lines.extend([
         "──────────────────────",
-        "🔴 *外資賣超 Top 10*",
+        "🟢 *外資賣超 Top 10*",
     ])
     if not foreign_sellers:
         lines.append("   無資料")
