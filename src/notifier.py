@@ -86,13 +86,13 @@ def send_discord_message(
     return SendResult(False, error="retry loop exited unexpectedly")
 
 def _format_num(lots: int) -> str:
-    """格式化買賣超張數，附帶正負號與台股顏色指示符號（正紅、負綠、平白）"""
+    """格式化買賣超張數，附帶正負號與指示符號（正🔼、負🔽、平▶️）"""
     if lots > 0:
-        return f"+{lots:,} 張 🔴"
+        return f"+{lots:,} 張 🔼"
     elif lots < 0:
-        return f"{lots:,} 張 🟢"
+        return f"{lots:,} 張 🔽"
     else:
-        return "0 張 ⚪"
+        return "0 張 ▶️"
 
 
 def format_market_institutional_message(date_str: str, summary: Dict[str, int]) -> str:
@@ -106,8 +106,9 @@ def format_market_institutional_message(date_str: str, summary: Dict[str, int]) 
     for label, key in (("外資", "foreign"), ("投信", "trust"), ("自營商", "dealer"), ("三大法人合計", "total")):
         lots = summary[key]
         direction = "買超" if lots > 0 else "賣超" if lots < 0 else "持平"
-        icon = "🔴" if lots > 0 else "🟢" if lots < 0 else "⚪"
-        lines.append(f"{icon} *{label}*：{direction} `{lots:+,} 張`")
+        icon = "🔼" if lots > 0 else "🔽" if lots < 0 else "▶️"
+        val_str = f"{lots:+,} 張" if lots != 0 else "0 張"
+        lines.append(f"{icon} *{label}*：{direction} `{val_str}`")
     lines.extend([
         "──────────────────────",
         "💡 資料範圍：上市與上櫃股票；自營商含自行買賣與避險。",
@@ -143,8 +144,9 @@ def format_market_institutional_amount_message(
 
     for label, amt in items:
         direction = "買超" if amt > 0 else "賣超" if amt < 0 else "持平"
-        icon = "🔴" if amt > 0 else "🟢" if amt < 0 else "⚪"
-        lines.append(f"{icon} *{label}*：{direction} `{amt / 100_000_000:+,.1f} 億`")
+        icon = "🔼" if amt > 0 else "🔽" if amt < 0 else "▶️"
+        val_str = f"{amt / 100_000_000:+,.1f} 億" if amt != 0 else "0.0 億"
+        lines.append(f"{icon} *{label}*：{direction} `{val_str}`")
 
     return "\n".join(lines)
 
@@ -191,19 +193,26 @@ def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]
                 s_str = "、".join(top_sellers) if top_sellers else "無"
                 lines.append(f"   • 分點買賣：買【{b_str}】｜賣【{s_str}】")
 
-            conc = item.get("broker_concentration")
-            if conc is not None:
-                if conc >= 15.0:
-                    flow_desc = f"集中度 `{conc:+.1f}%` 🔥 主力強力吸籌，籌碼高度集中"
-                elif conc >= 5.0:
-                    flow_desc = f"集中度 `{conc:+.1f}%` 🔴 主力偏多吸籌，籌碼趨向集中"
-                elif conc > -5.0:
-                    flow_desc = f"集中度 `{conc:+.1f}%` ⚖️ 主力多空拉鋸，籌碼中性平衡"
-                elif conc > -15.0:
-                    flow_desc = f"集中度 `{conc:+.1f}%` ⚠️ 籌碼偏向發散，流向散戶接盤"
-                else:
-                    flow_desc = f"集中度 `{conc:+.1f}%` ⚠️ 主力大幅倒貨，由全台散戶接盤"
-                lines.append(f"   • 籌碼流向：{flow_desc}")
+            c1 = item.get("concentration_1d", item.get("broker_concentration"))
+            c5 = item.get("concentration_5d")
+            matrix_status = item.get("matrix_status", "")
+            matrix_action = item.get("matrix_action", "")
+
+            top_b_5d = item.get("top_buyers_5d", [])
+            top_s_5d = item.get("top_sellers_5d", [])
+
+            if c5 is not None and c1 is not None:
+                conc_text = f"5D `{c5:+.1f}%` ｜ 1D `{c1:+.1f}%`"
+                diag_text = f"【{matrix_status}】" if matrix_status else ""
+                lines.append(f"   • 籌碼型態：{diag_text} 集中度 {conc_text}（{matrix_action}）")
+            elif c1 is not None:
+                conc_text = f"`{c1:+.1f}%`"
+                lines.append(f"   • 籌碼流向：集中度 {conc_text}")
+
+            if top_b_5d or top_s_5d:
+                b5_str = "、".join(top_b_5d[:2]) if top_b_5d else "無"
+                s5_str = "、".join(top_s_5d[:2]) if top_s_5d else "無"
+                lines.append(f"   • 5日波段：買【{b5_str}】｜賣【{s5_str}】")
 
             # 隔日衝主力警戒
             day_trading_brokers = [
@@ -410,7 +419,7 @@ def format_daily_sellers_message(
 
     lines.extend([
         "──────────────────────",
-        "🟢 *外資賣超 Top 10*",
+        "🔽 *外資賣超 Top 10*",
     ])
     if not foreign_sellers:
         lines.append("   無資料")
@@ -420,7 +429,7 @@ def format_daily_sellers_message(
 
     lines.extend([
         "──────────────────────",
-        "🔻 *投信賣超 Top 10*",
+        "🔽 *投信賣超 Top 10*",
     ])
     if not it_sellers:
         lines.append("   無資料")

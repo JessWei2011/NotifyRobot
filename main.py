@@ -260,11 +260,25 @@ def main():
     parser.add_argument("--test-discord", action="store_true", help="發送 Discord Webhook 連線測試")
     parser.add_argument("--heartbeat-discord", action="store_true", help="發送 Discord 主機心跳通知")
     parser.add_argument("--screener-only", action="store_true", help="只推送籌碼策略榜單（不推自選股）")
+    parser.add_argument("--discord-bot", action="store_true", help="啟動 Discord 互動指令機器人常駐服務 (/stock, /news, /alert)")
     args = parser.parse_args()
 
     config = load_config()
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     telegram_enabled, discord_enabled = get_notification_channels(config)
+
+    if args.discord_bot:
+        from src.bot_service import start_discord_bot
+        discord_token = os.getenv("DISCORD_BOT_TOKEN")
+        if not discord_token:
+            logger.error("未設定 DISCORD_BOT_TOKEN，無法啟動 Discord 互動機器人")
+            return 1
+        logger.info("啟動 NotifyRobot Discord 互動指令機器人...")
+        try:
+            start_discord_bot(discord_token)
+        except KeyboardInterrupt:
+            logger.info("Discord 機器人已正常停止")
+        return 0
 
     if args.test_discord:
         bot_token = os.getenv("DISCORD_BOT_TOKEN", "").strip()

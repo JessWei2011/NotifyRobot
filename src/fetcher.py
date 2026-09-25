@@ -20,10 +20,11 @@ def _clean_int(val_str: str) -> int:
     except ValueError:
         return 0
 
-def fetch_twse_t86_for_date(date_str: str) -> Optional[List[Dict[str, Any]]]:
+def fetch_twse_t86_for_date(date_str: str, max_retries: int = 3) -> Optional[List[Dict[str, Any]]]:
     """
     抓取指定日期的證交所 T86 三大法人買賣超日報
     :param date_str: YYYYMMDD 格式字串
+    :param max_retries: 最大重試次數
     :return: 股票籌碼資料清單，若無資料或尚未產生則回傳 None
     """
     url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date_str}&selectType=ALL&response=json"
@@ -31,56 +32,67 @@ def fetch_twse_t86_for_date(date_str: str) -> Optional[List[Dict[str, Any]]]:
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        res.raise_for_status()
-        data = res.json()
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            res = requests.get(url, headers=headers, timeout=20)
+            res.raise_for_status()
 
-        if data.get("stat") != "OK":
-            logger.info(f"日期 {date_str} 無資料或非交易日: {data.get('stat')}")
-            return None
+            if not res.text or not res.text.strip():
+                raise ValueError("TWSE 回傳內容為空")
 
-        raw_rows = data.get("data", [])
-        parsed_records = []
+            data = res.json()
 
-        for row in raw_rows:
-            if len(row) < 19:
-                continue
+            if data.get("stat") != "OK":
+                logger.info(f"日期 {date_str} 無資料或非交易日: {data.get('stat')}")
+                return None
 
-            code = str(row[0]).strip()
-            name = str(row[1]).strip()
+            raw_rows = data.get("data", [])
+            parsed_records = []
 
-            # 外陸資買賣超股數(不含外資自營商): index 4
-            # 外資自營商買賣超股數: index 7
-            # 投信買賣超股數: index 10
-            # 自營商買賣超股數: index 11
-            # 三大法人買賣超股數: index 18
-            foreign_shares = _clean_int(row[4]) + _clean_int(row[7])
-            trust_shares = _clean_int(row[10])
-            dealer_shares = _clean_int(row[11])
-            total_shares = _clean_int(row[18])
+            for row in raw_rows:
+                if len(row) < 19:
+                    continue
 
-            # 換算為張數 (1張 = 1,000股)
-            record = {
-                "code": code,
-                "name": name,
-                "foreign_shares": foreign_shares,
-                "trust_shares": trust_shares,
-                "dealer_shares": dealer_shares,
-                "total_shares": total_shares,
-                "foreign_lots": round(foreign_shares / 1000),
-                "trust_lots": round(trust_shares / 1000),
-                "dealer_lots": round(dealer_shares / 1000),
-                "total_lots": round(total_shares / 1000),
-            }
-            parsed_records.append(record)
+                code = str(row[0]).strip()
+                name = str(row[1]).strip()
 
-        logger.info(f"成功取得 {date_str} 盤後籌碼，共 {len(parsed_records)} 檔上市證券")
-        return parsed_records
+                # 外陸資買賣超股數(不含外資自營商): index 4
+                # 外資自營商買賣超股數: index 7
+                # 投信買賣超股數: index 10
+                # 自營商買賣超股數: index 11
+                # 三大法人買賣超股數: index 18
+                foreign_shares = _clean_int(row[4]) + _clean_int(row[7])
+                trust_shares = _clean_int(row[10])
+                dealer_shares = _clean_int(row[11])
+                total_shares = _clean_int(row[18])
 
-    except Exception as e:
-        logger.error(f"抓取 TWSE T86 失敗 ({date_str}): {e}")
-        return None
+                # 換算為張數 (1張 = 1,000股)
+                record = {
+                    "code": code,
+                    "name": name,
+                    "foreign_shares": foreign_shares,
+                    "trust_shares": trust_shares,
+                    "dealer_shares": dealer_shares,
+                    "total_shares": total_shares,
+                    "foreign_lots": round(foreign_shares / 1000),
+                    "trust_lots": round(trust_shares / 1000),
+                    "dealer_lots": round(dealer_shares / 1000),
+                    "total_lots": round(total_shares / 1000),
+                }
+                parsed_records.append(record)
+
+            logger.info(f"成功取得 {date_str} 盤後籌碼，共 {len(parsed_records)} 檔上市證券")
+            return parsed_records
+
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                logger.warning(f"抓取 TWSE T86 失敗 ({date_str})，第 {attempt + 1}/{max_retries} 次重試...: {e}")
+                time.sleep(2 * (attempt + 1))
+
+    logger.error(f"抓取 TWSE T86 最終失敗 ({date_str}): {last_error}")
+    return None
 
 
 def fetch_tpex_t86_for_date(date_str: str) -> Optional[List[Dict[str, Any]]]:
@@ -219,6 +231,12 @@ def get_latest_institutional_data(target_date: Optional[str] = None) -> Tuple[st
     if target_date:
         twse_records = fetch_twse_t86_for_date(target_date)
         tpex_records = fetch_tpex_t86_for_date(target_date)
+        # 上櫃有公布但上市失敗時，主動延遲再嘗試補抓一次
+        if twse_records is None and tpex_records is not None:
+            logger.warning(f"指定日期 {target_date} 僅取得上櫃資料而無上市資料，嘗試再次補抓 TWSE...")
+            time.sleep(3)
+            twse_records = fetch_twse_t86_for_date(target_date, max_retries=3)
+
         if twse_records is None and tpex_records is None:
             raise ValueError(f"指定日期 {target_date} 查無三大法人籌碼資料（可能非交易日或尚未公布）")
         return target_date, (twse_records or []) + (tpex_records or [])
@@ -235,6 +253,14 @@ def get_latest_institutional_data(target_date: Optional[str] = None) -> Tuple[st
         logger.info(f"嘗試獲取交易日資料: {date_str}")
         twse_records = fetch_twse_t86_for_date(date_str)
         tpex_records = fetch_tpex_t86_for_date(date_str)
+
+        # 若上櫃成功但上市失敗，一般交易日通常兩者皆有，進行二次補抓
+        if twse_records is None and tpex_records is not None:
+            logger.warning(f"日期 {date_str} 僅取得上櫃資料而無上市資料，嘗試再次補抓 TWSE...")
+            time.sleep(3)
+            twse_records = fetch_twse_t86_for_date(date_str, max_retries=3)
+
+        # 若至少取得一個市場且重試完成
         records = (twse_records or []) + (tpex_records or [])
         if records:
             return date_str, records
@@ -345,102 +371,176 @@ def _clean_broker_name(name: str) -> str:
     return cleaned.strip() or name
 
 
+def _parse_single_period_html(html_text: str) -> Optional[Dict[str, Any]]:
+    soup = BeautifulSoup(html_text, "html.parser")
+    date_match = re.search(r"最後更新日：(\d{4}/\d{2}/\d{2})", soup.get_text())
+    report_date = date_match.group(1) if date_match else ""
+
+    top_buyers, top_sellers = [], []
+    total_buy, total_sell = 0, 0
+    buy_pct_sum, sell_pct_sum = 0.0, 0.0
+
+    for t in soup.find_all("table"):
+        text = t.get_text()
+        if "合計買超張數" in text and "合計賣超張數" in text:
+            for r in t.find_all("tr"):
+                cols = [td.get_text(strip=True).replace(",", "") for td in r.find_all(["td", "th"])]
+                if len(cols) >= 10:
+                    b_name, b_net = cols[0], cols[3]
+                    s_name, s_net = cols[5], cols[8]
+                    if (
+                        len(top_buyers) < 2
+                        and b_name
+                        and b_name not in ("買超券商", "合計買超張數")
+                        and b_net.lstrip("-").isdigit()
+                        and int(b_net) > 0
+                    ):
+                        clean_b = _clean_broker_name(b_name)
+                        top_buyers.append(f"{clean_b}+{int(b_net):,}")
+                    if (
+                        len(top_sellers) < 2
+                        and s_name
+                        and s_name not in ("賣超券商", "合計賣超張數")
+                        and s_net.lstrip("-").isdigit()
+                        and int(s_net) > 0
+                    ):
+                        clean_s = _clean_broker_name(s_name)
+                        top_sellers.append(f"{clean_s}-{int(s_net):,}")
+
+                    if cols[4].endswith("%"):
+                        try:
+                            buy_pct_sum += float(cols[4].rstrip("%"))
+                        except ValueError:
+                            pass
+                    if cols[9].endswith("%"):
+                        try:
+                            sell_pct_sum += float(cols[9].rstrip("%"))
+                        except ValueError:
+                            pass
+
+                for i, c in enumerate(cols):
+                    if "合計買超張數" in c and i + 1 < len(cols) and cols[i + 1].isdigit():
+                        total_buy = int(cols[i + 1])
+                    if "合計賣超張數" in c and i + 1 < len(cols) and cols[i + 1].isdigit():
+                        total_sell = int(cols[i + 1])
+            break
+
+    if total_buy > 0 or total_sell > 0:
+        conc = round(buy_pct_sum - sell_pct_sum, 1) if (buy_pct_sum or sell_pct_sum) else 0.0
+        return {
+            "report_date": report_date,
+            "total_buy": total_buy,
+            "total_sell": total_sell,
+            "net_lots": total_buy - total_sell,
+            "top_buyers": top_buyers,
+            "top_sellers": top_sellers,
+            "concentration": conc,
+        }
+    return None
+
+
+def determine_matrix_status(conc_1d: Optional[float], conc_5d: Optional[float]) -> Dict[str, str]:
+    if conc_1d is None and conc_5d is None:
+        return {"status": "⚪ 無資料", "action": "觀望", "type": "none"}
+    c1 = conc_1d if conc_1d is not None else 0.0
+    c5 = conc_5d if conc_5d is not None else c1
+
+    if c5 >= 5.0 and c1 >= 10.0:
+        return {"status": "🔥 真突破·強勢吸籌", "action": "波段順勢做多", "type": "breakout"}
+    elif c5 >= 5.0 and c1 <= -5.0:
+        return {"status": "💎 波段吸籌·短線洗盤", "action": "拉回守均線低接", "type": "wash"}
+    elif c5 <= -5.0 and c1 >= 10.0:
+        return {"status": "⚠️ 空方反彈·隔日沖搶短", "action": "逢高獲利減碼，切忌追高", "type": "rebound"}
+    elif c5 <= -5.0 and c1 <= -5.0:
+        return {"status": "🚨 主力波段倒貨", "action": "空手觀望或果斷停損", "type": "dump"}
+    elif c5 >= 5.0:
+        return {"status": "🟢 波段主力吸籌", "action": "持股續抱", "type": "accumulate"}
+    elif c5 <= -5.0:
+        return {"status": "🔴 波段籌碼發散", "action": "謹慎避開", "type": "distribute"}
+    elif c1 >= 10.0:
+        return {"status": "⚡ 單日大單急拉", "action": "觀察次日續航力", "type": "single_buy"}
+    elif c1 <= -10.0:
+        return {"status": "⚠️ 單日急殺調節", "action": "提防短線回檔", "type": "single_sell"}
+    else:
+        return {"status": "⚪ 主力多空拉鋸", "action": "區間震盪整理", "type": "neutral"}
+
+
 def fetch_broker_branch_chips(code: str, target_date: str = "") -> Optional[Dict[str, Any]]:
-    """抓取單一個股券商分點主力買賣超（買超前15名 vs 賣超前15名合計）"""
-    urls = [
-        f"https://concords.moneydj.com/z/zc/zco/zco.djhtm?a={code}",
-        f"https://moneydj.emega.com.tw/jsdata/z/zc/zco/zco.djhtm?a={code}",
-    ]
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    """抓取單一個股券商分點主力買賣超（同時抓取單日 1D 與波段 5D 數據並做矩陣診斷）"""
     target_formatted = ""
+    is_mmdd = False
     if target_date:
-        if len(target_date) == 8 and target_date.isdigit():
-            target_formatted = f"{target_date[:4]}/{target_date[4:6]}/{target_date[6:8]}"
+        clean_d = str(target_date).replace("-", "").replace("/", "").strip()
+        if len(clean_d) == 8 and clean_d.isdigit():
+            target_formatted = f"{clean_d[:4]}/{clean_d[4:6]}/{clean_d[6:8]}"
+        elif len(clean_d) == 4 and clean_d.isdigit():
+            target_formatted = f"{clean_d[:2]}/{clean_d[2:4]}"
+            is_mmdd = True
         else:
             target_formatted = target_date
 
-    for url in urls:
-        try:
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code != 200:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    mirrors = [
+        "https://concords.moneydj.com/z/zc/zco/zco_{code}_{period}.djhtm",
+        "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco_{code}_{period}.djhtm",
+        "https://kgieworld.moneydj.com/z/zc/zco/zco_{code}_{period}.djhtm",
+    ]
+
+    def _fetch_p(p: int) -> Optional[Dict[str, Any]]:
+        for tmpl in mirrors:
+            url = tmpl.format(code=code, period=p)
+            try:
+                resp = requests.get(url, headers=headers, timeout=8)
+                if resp.status_code != 200:
+                    continue
+                resp.encoding = "big5"
+                data = _parse_single_period_html(resp.text)
+                if data:
+                    rep_date = data.get("report_date", "")
+                    if target_formatted and rep_date:
+                        if is_mmdd and not rep_date.endswith(target_formatted):
+                            continue
+                        elif not is_mmdd and rep_date != target_formatted:
+                            continue
+                    return data
+            except Exception:
                 continue
-            resp.encoding = "big5"
-            soup = BeautifulSoup(resp.text, "html.parser")
+        return None
 
-            # 檢查更新日期
-            date_match = re.search(r"最後更新日：(\d{4}/\d{2}/\d{2})", soup.get_text())
-            report_date = date_match.group(1) if date_match else ""
-            if target_formatted and report_date and report_date != target_formatted:
-                logger.debug(f"[{code}] 券商分點最後更新日為 {report_date}，尚未更新至 {target_formatted}")
-                return None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(_fetch_p, 1)
+        f5 = executor.submit(_fetch_p, 2)
+        d1 = f1.result()
+        d5 = f5.result()
 
-            top_buyers, top_sellers = [], []
-            total_buy, total_sell = 0, 0
-            buy_pct_sum, sell_pct_sum = 0.0, 0.0
+    if not d1 and not d5:
+        return None
 
-            for t in soup.find_all("table"):
-                text = t.get_text()
-                if "合計買超張數" in text and "合計賣超張數" in text:
-                    for r in t.find_all("tr"):
-                        cols = [td.get_text(strip=True).replace(",", "") for td in r.find_all(["td", "th"])]
-                        if len(cols) >= 10:
-                            b_name, b_net = cols[0], cols[3]
-                            s_name, s_net = cols[5], cols[8]
-                            if (
-                                len(top_buyers) < 2
-                                and b_name
-                                and b_name not in ("買超券商", "合計買超張數")
-                                and b_net.lstrip("-").isdigit()
-                                and int(b_net) > 0
-                            ):
-                                clean_b = _clean_broker_name(b_name)
-                                top_buyers.append(f"{clean_b}+{int(b_net):,}")
-                            if (
-                                len(top_sellers) < 2
-                                and s_name
-                                and s_name not in ("賣超券商", "合計賣超張數")
-                                and s_net.lstrip("-").isdigit()
-                                and int(s_net) > 0
-                            ):
-                                clean_s = _clean_broker_name(s_name)
-                                top_sellers.append(f"{clean_s}-{int(s_net):,}")
+    base_d = d1 or d5
+    rep_date = base_d.get("report_date", "")
+    conc_1d = d1.get("concentration") if d1 else None
+    conc_5d = d5.get("concentration") if d5 else None
 
-                            if cols[4].endswith("%"):
-                                try:
-                                    buy_pct_sum += float(cols[4].rstrip("%"))
-                                except ValueError:
-                                    pass
-                            if cols[9].endswith("%"):
-                                try:
-                                    sell_pct_sum += float(cols[9].rstrip("%"))
-                                except ValueError:
-                                    pass
+    matrix_info = determine_matrix_status(conc_1d, conc_5d)
 
-                        for i, c in enumerate(cols):
-                            if "合計買超張數" in c and i + 1 < len(cols) and cols[i + 1].isdigit():
-                                total_buy = int(cols[i + 1])
-                            if "合計賣超張數" in c and i + 1 < len(cols) and cols[i + 1].isdigit():
-                                total_sell = int(cols[i + 1])
-                    break
-
-            if total_buy > 0 or total_sell > 0:
-                concentration = round(buy_pct_sum - sell_pct_sum, 1) if (buy_pct_sum or sell_pct_sum) else None
-                return {
-                    "broker_buy_lots": total_buy,
-                    "broker_sell_lots": total_sell,
-                    "broker_net_lots": total_buy - total_sell,
-                    "top_buyers": top_buyers,
-                    "top_sellers": top_sellers,
-                    "broker_concentration": concentration,
-                    "broker_report_date": report_date,
-                }
-        except Exception as exc:
-            logger.debug(f"[{code}] 抓取券商分點失敗 ({url}): {exc}")
-            continue
-
-    return None
+    return {
+        "broker_buy_lots": d1.get("total_buy", 0) if d1 else (d5.get("total_buy", 0) if d5 else 0),
+        "broker_sell_lots": d1.get("total_sell", 0) if d1 else (d5.get("total_sell", 0) if d5 else 0),
+        "broker_net_lots": (d1.get("net_lots", 0) if d1 else (d5.get("net_lots", 0) if d5 else 0)),
+        "top_buyers": d1.get("top_buyers", []) if d1 else [],
+        "top_sellers": d1.get("top_sellers", []) if d1 else [],
+        "top_buyers_5d": d5.get("top_buyers", []) if d5 else [],
+        "top_sellers_5d": d5.get("top_sellers", []) if d5 else [],
+        "broker_concentration": conc_1d,
+        "concentration_1d": conc_1d,
+        "concentration_5d": conc_5d,
+        "matrix_status": matrix_info["status"],
+        "matrix_action": matrix_info["action"],
+        "matrix_type": matrix_info["type"],
+        "broker_report_date": rep_date,
+    }
 
 
 def fetch_watchlist_broker_chips(codes: List[str], target_date: str = "") -> Dict[str, Dict[str, Any]]:

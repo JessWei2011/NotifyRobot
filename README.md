@@ -105,13 +105,39 @@
 
 ---
 
+## 🤖 Discord 互動查詢機器人 (斜線指令)
+
+NotifyRobot 現已支援 Discord 即時雙向互動！只要機器人常駐執行，即可在 Discord 任何頻道直接下指令查詢個股：
+
+- **`/stock <代號>`**：查詢個股即時價量行情、開高低收、成交量、內外盤大單力道，以及最近交易日三大法人（外資、投信、自營商）買賣超籌碼。
+- **`/news <代號>`**：上網即時爬取個股最新新聞，並由 AI 自動總結核心動態、題材、正面動能（利多）與風險觀察（利空）。
+- **`/alert <代號>`（或 `/alart`）**：查詢個股是否進入注意股票、警告或處置股票。**若主管機關已公告確認處置日期（不論是否已經開始處置），皆會完整印出處置起訖日期、原因與措施。**
+
+### 啟動方式
+- **Mac 雙擊**：`run_discord_bot.command`
+- **Windows 雙擊**：`run_discord_bot.bat`
+- **終端機執行**：
+  ```bash
+  python3 run_bot.py
+  # 或
+  python3 main.py --discord-bot
+  ```
+
+> 💡 **AI 新聞分析設定**：在 `.env` 中設定 `GEMINI_API_KEY=你的金鑰`（可免費於 Google AI Studio 申請），即可啟用 Gemini 智能新聞重點分析！若未設定，機器人將條列最新新聞標題與連結。
+
+---
+
 ## 📂 專案檔案說明
 
-- `main.py`：主程式入口，支援 `--dry-run` 與 `--date YYYYMMDD`。
+- `main.py`：主程式入口，支援 `--dry-run`、`--date YYYYMMDD` 與 `--discord-bot`。
+- `run_bot.py`：Discord 互動機器人啟動腳本。
+- `run_discord_bot.command` / `.bat`：一鍵啟動 Discord 互動機器人。
+- `src/bot_service.py`：Discord Slash Commands 與事件監聽處理器。
+- `src/stock_query.py`：即時價量、籌碼查詢、處置注意警示與 AI 新聞分析模組。
 - `test_telegram.py`：Telegram Bot 連線驗證小幫手。
 - `setup_cron.sh`：Mac 定時排程設定腳本。
 - `config.json`：自選股清單與策略開關設定。
-- `.env`：敏感金鑰 (Token / Chat ID) 儲存檔。
+- `.env`：敏感金鑰 (Token / Chat ID / API Keys) 儲存檔。
 - `src/fetcher.py`：證交所官方開放資料 API 爬蟲。
 - `src/analyzer.py`：籌碼統計、自選比對、土洋同步買超篩選。
-- `src/notifier.py`：Telegram Markdown 訊息美化與發送。
+- `src/notifier.py`：Telegram / Discord Markdown 訊息美化與發送。
