@@ -16,6 +16,7 @@ from src.stock_query import (
     summarize_news_with_ai,
     build_full_stock_watchlist_report,
 )
+from src.chip_advisor import evaluate_stock_chip
 
 logger = logging.getLogger(__name__)
 
@@ -206,23 +207,51 @@ async def slash_alart(interaction: discord.Interaction, code: str):
     await handle_alert_query(interaction, code)
 
 
+# ==========================================
+# 4. /chip 指令：外掛接入點（籌碼分析 + Qwen 專業評價）
+# ==========================================
+@tree.command(name="chip", description="整理個股籌碼（排除中實戶）並由本地 Qwen 評估短期趨勢")
+@app_commands.describe(code="台股代號，例如 2330 或 1815")
+async def slash_chip(interaction: discord.Interaction, code: str):
+    await interaction.response.defer()
+    clean_code = code.strip().upper()
+
+    # 於背景線程呼叫外掛函式，避免阻塞 Discord 事件迴圈
+    evaluation = await asyncio.to_thread(evaluate_stock_chip, clean_code)
+
+    # Discord 單則訊息長度限制為 2000 字元，若超過進行分段安全傳送
+    if len(evaluation) <= 1900:
+        await interaction.followup.send(evaluation)
+    else:
+        chunks = [evaluation[i:i + 1900] for i in range(0, len(evaluation), 1900)]
+        for chunk in chunks:
+            await interaction.followup.send(chunk)
+
+
 @client.event
 async def on_ready():
     logger.info("Discord Bot 已成功連線，使用者：%s (ID: %s)", client.user, client.user.id)
     try:
+        # 1. 即時同步至目前已加入之所有伺服器 (Guild Sync 秒級即時生效，免等待 Discord 全域 1 小時快取)
+        for guild in client.guilds:
+            tree.copy_global_to(guild=guild)
+            await tree.sync(guild=guild)
+            logger.info("已即時同步斜線指令至伺服器: %s (ID: %s)", guild.name, guild.id)
+
+        # 2. 同步全域指令 (Global Sync)
         synced = await tree.sync()
-        logger.info("已同步 %d 個斜線指令 (Slash Commands)", len(synced))
+        logger.info("已同步 %d 個全域斜線指令 (Slash Commands)", len(synced))
     except Exception as exc:
         logger.error("同步斜線指令失敗: %s", exc)
 
     await client.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="台股行情 | /stock /news /alert",
+            name="台股行情 | /stock /news /alert /chip",
         )
     )
     print(f"NotifyRobot Discord 機器人已上線！(使用者: {client.user})")
-    print("指令清單: /stock, /news, /alert, /alart")
+    print("指令清單: /stock, /news, /alert, /alart, /chip")
 
 
 def start_discord_bot(token: Optional[str] = None):
