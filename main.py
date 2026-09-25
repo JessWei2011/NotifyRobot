@@ -394,20 +394,42 @@ def main():
         market_snapshot_path = BASE_DIR / "data" / "market_big_holder_snapshot.json"
         previous = load_previous_snapshot(snapshot_path)
         previous_market = load_previous_snapshot(market_snapshot_path)
-        historical_previous = None
-        if (
+
+        # 檢查本機快照中是否缺少某些當前自選股（例如從庫存新加入之持股）
+        prev_stocks = previous.get("stocks", {}) if previous and isinstance(previous.get("stocks"), dict) else {}
+        missing_codes = {c for c in codes if c not in prev_stocks}
+
+        need_historical = (
             not previous
             or previous.get("date") >= report_date
             or not previous_market
             or previous_market.get("date") >= report_date
-        ):
-            previous_date, previous_stocks = fetch_previous_market_snapshot(report_date)
-            historical_previous = {"date": previous_date, "stocks": previous_stocks}
+            or bool(missing_codes)
+        )
+
+        historical_previous = None
+        if need_historical:
+            try:
+                target_hint = f"缺少 {len(missing_codes)} 檔新自選股歷史數據" if missing_codes else "更新上期基準"
+                logger.info("正在調閱上週集保全市場歷史資料庫 (%s)...", target_hint)
+                previous_date, previous_stocks = fetch_previous_market_snapshot(report_date)
+                historical_previous = {"date": previous_date, "stocks": previous_stocks}
+            except Exception as exc:
+                logger.warning("調閱上週集保全市場歷史封存失敗: %s", exc)
+
         if not previous or previous.get("date") >= report_date:
-            previous = {
-                "date": historical_previous["date"],
-                "stocks": {code: stock for code, stock in historical_previous["stocks"].items() if code in codes},
-            }
+            if historical_previous:
+                previous = {
+                    "date": historical_previous["date"],
+                    "stocks": {code: stock for code, stock in historical_previous["stocks"].items() if code in codes},
+                }
+        elif historical_previous and missing_codes:
+            # 本機已有快照，但部分新自選股缺失，從調閱的歷史封存中自動精準補齊
+            for c in missing_codes:
+                if c in historical_previous["stocks"]:
+                    previous["stocks"][c] = historical_previous["stocks"][c]
+                    logger.info("已從集保歷史資料庫補齊 %s 之上週基準數據", c)
+
         if not previous_market or previous_market.get("date") >= report_date:
             previous_market = historical_previous
         for code, stock in market_snapshot.items():
