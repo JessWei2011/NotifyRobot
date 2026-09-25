@@ -17,6 +17,7 @@ from src.stock_query import (
     build_full_stock_watchlist_report,
 )
 from src.chip_advisor import evaluate_stock_chip
+from src.stockcenter_client import build_integrated_stock_embed
 
 logger = logging.getLogger(__name__)
 
@@ -35,28 +36,22 @@ def _format_lots(num: int) -> str:
 
 
 # ==========================================
-# 1. /stock 指令：回傳與自選股 (Watchlist) 完全同等規格之完整報告
+# 1. /stock 指令：回傳整合 NotifyRobot 與 StockCenter 之個股全方位籌碼與量化指標報告
 # ==========================================
-@tree.command(name="stock", description="查詢個股完整籌碼報告（規格與自選股推播報告完全一致）")
-@app_commands.describe(code="台股代號，例如 2330 或 3529")
+@tree.command(name="stock", description="查詢個股完整籌碼報告與 StockCenter 量化指標標籤")
+@app_commands.describe(code="台股代號或名稱，例如 2330 或 穎崴")
 async def slash_stock(interaction: discord.Interaction, code: str):
     await interaction.response.defer()
-    clean_code = code.strip().upper()
+    clean_code = code.strip()
 
-    report = build_full_stock_watchlist_report(clean_code)
-    if not report:
+    embed = await asyncio.to_thread(build_integrated_stock_embed, clean_code)
+    if not embed:
         await interaction.followup.send(
-            f"查無此股票代號「{clean_code}」，請確認台股代號是否正確。",
+            f"查無此股票「{clean_code}」，請確認台股代號或名稱是否正確。",
             ephemeral=True,
         )
         return
 
-    embed = discord.Embed(
-        description=report["text"],
-        color=report["color"],
-        timestamp=datetime.datetime.now(datetime.timezone.utc),
-    )
-    embed.set_footer(text="NotifyRobot 個股籌碼全方位報告 • 與自選股報告規格同步")
     await interaction.followup.send(embed=embed)
 
 
