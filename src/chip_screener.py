@@ -362,3 +362,38 @@ def export_to_stockcenter_ranking(
             logger.info("已同步更新 StockCenter 排行榜文件: %s", filename)
         except Exception as exc:
             logger.warning("更新 StockCenter 文件 %s 失敗: %s", filename, exc)
+
+    # 3. 同步寫入 StockCenter 的法人與主力籌碼策略榜 (institutional_chip_strategy_ranking.md)
+    inst_md = sc_path / "institutional_chip_strategy_ranking.md"
+    if inst_md.exists():
+        try:
+            content = inst_md.read_text(encoding="utf-8")
+            section_header = "## ⑤ 🚀 長短線籌碼共振 TOP 10（電子／AI 供應鏈）"
+            embed_lines = [
+                section_header,
+                "",
+                "| 排名 | 股票代號 | 股票名稱 | AI族群標籤 | 千張大戶持股 | 5D集中度 | 共振評分 |",
+                "|---:|:---:|:---|:---|---:|---:|---:|",
+            ]
+            for idx, s in enumerate(stocks, 1):
+                ai_label = s.get("ai_tag") or s.get("sector") or "電子"
+                embed_lines.append(
+                    f"| {idx} | `{s['code']}` | {s['name']} | {ai_label} | {s['ratio_1000']:.1f}%(+{s['change_1000']:.2f}pt) | +{s['concentration_5d']:.1f}% | {s['final_score']} |"
+                )
+            embed_lines.append("")
+            embed_block = "\n".join(embed_lines)
+
+            if section_header in content:
+                pattern = re.compile(rf"{re.escape(section_header)}.*?(?=\n## |\n> 僅納入|\Z)", re.DOTALL)
+                new_content = pattern.sub(embed_block + "\n", content)
+            else:
+                if "\n> 僅納入" in content:
+                    parts = content.split("\n> 僅納入", 1)
+                    new_content = parts[0].rstrip() + "\n\n" + embed_block + "\n> 僅納入" + parts[1]
+                else:
+                    new_content = content.rstrip() + "\n\n" + embed_block
+
+            inst_md.write_text(new_content, encoding="utf-8")
+            logger.info("已成功寫入 StockCenter 法人與主力策略榜: %s", inst_md)
+        except Exception as exc:
+            logger.warning("寫入 StockCenter 法人策略榜失敗: %s", exc)
