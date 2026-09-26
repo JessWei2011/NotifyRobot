@@ -160,8 +160,8 @@ def dispatch_discord_message(
     chip_channel_id = os.getenv("DISCORD_CHIP_CHANNEL_ID", "").strip()
     general_channel_id = os.getenv("DISCORD_CHANNEL_ID", "").strip()
 
-    # 三大法人買賣超榜單與波段連買等大量籌碼策略資料分流至 DISCORD_CHIP_CHANNEL_ID（#籌碼資料）
-    if report_type in {"screener_buyers", "screener_sellers", "screener_consecutive"}:
+    # 三大法人買賣超榜單與籌碼共振Top10等籌碼資料分流至 DISCORD_CHIP_CHANNEL_ID（#籌碼資料）
+    if report_type in {"screener_buyers", "screener_sellers", "screener_consecutive", "chip_resonance"}:
         target_channel_id = chip_channel_id or general_channel_id
     else:
         target_channel_id = general_channel_id
@@ -436,7 +436,30 @@ def main():
             stock["name"] = market_names.get(code, stock.get("name", code))
         rows = build_big_holder_rows(watchlist, snapshot, previous)
         rankings = build_big_holder_rankings(market_snapshot, previous_market, allowed_codes=set(listed_otc_names))
+
+        # 執行長短線籌碼共振篩選（限制上市櫃電子股，AI供應鏈優先）
+        from src.chip_screener import screen_chip_resonance_top10, format_chip_resonance_report, export_to_stockcenter_ranking
+        baseline_date = previous.get("date") if previous else ""
+        resonance_top10 = screen_chip_resonance_top10(
+            market_snapshot=market_snapshot,
+            previous_market=previous_market,
+            market_names=market_names,
+            market_sectors={},
+            limit=10,
+            trade_date=report_date,
+        )
+        resonance_report_text = ""
+        if resonance_top10:
+            # 1. 同步顯示在 StockCenter 排行榜文件
+            export_to_stockcenter_ranking(resonance_top10, report_date)
+            # 2. 產出專屬 Markdown 報表
+            resonance_report_text = format_chip_resonance_report(resonance_top10, report_date, baseline_date)
+
+        # 組裝週報訊息（將共振榜單附加於自選股大戶週報中）
         message = format_big_holder_message(report_date, previous.get("date") if previous else None, rows, rankings)
+        if resonance_report_text:
+            message += f"\n\n{resonance_report_text}"
+
         if args.dry_run:
             print(message)
             return 0
@@ -451,6 +474,14 @@ def main():
             token, chat_id, report_date, "big_holders", message, state, args.force,
             notification_cfg.get("enable_ack_button", False), notification_cfg.get("max_retries", 3), telegram_enabled, discord_enabled,
         )
+
+        # 另外單獨將「長短線籌碼共振 Top 10」推播至 Discord #籌碼資料頻道
+        if delivered and discord_enabled and resonance_report_text:
+            send_report(
+                token, chat_id, report_date, "chip_resonance", resonance_report_text, state, args.force,
+                False, notification_cfg.get("max_retries", 3), False, True,
+            )
+
         if delivered:
             save_snapshot(snapshot_path, report_date, snapshot)
             save_snapshot(market_snapshot_path, report_date, market_snapshot)

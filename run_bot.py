@@ -8,6 +8,7 @@ NotifyRobot Discord 互動指令機器人啟動腳本
   - /alert <代號>：查注意、警告、處置（處置起訖日期不管是否已進入皆完整印出）
   - /alart <代號>：同 /alert
   - /chip <代號> ：整理除中實戶外的籌碼資訊，並由本地 Qwen 給出專業短期趨勢評價
+  - /resonance   ：查詢長短線籌碼共振 Top 10（限電子／AI 股，千張大戶逐週增加 ＋ 5D主力分點買超）
 """
 
 import os

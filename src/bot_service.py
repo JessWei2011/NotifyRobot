@@ -223,6 +223,49 @@ async def slash_chip(interaction: discord.Interaction, code: str):
             await interaction.followup.send(chunk)
 
 
+# ==========================================
+# 5. /resonance 指令：查詢長短線籌碼共振 Top 10（電子／AI 供應鏈）
+# ==========================================
+@tree.command(name="resonance", description="查詢長短線籌碼共振 Top 10（千張大戶逐週增加 ＋ 5D分點主力買超）")
+async def slash_resonance(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    def _fetch_resonance():
+        import json
+        from pathlib import Path
+        from src.chip_screener import screen_chip_resonance_top10, format_chip_resonance_report
+        from src.big_holders import fetch_previous_market_snapshot
+
+        snapshot_path = Path(__file__).resolve().parent.parent / "data" / "market_big_holder_snapshot.json"
+        if not snapshot_path.exists():
+            return "暫無集保快照資料，請先執行大戶週報排程。"
+        with open(snapshot_path, "r", encoding="utf-8") as f:
+            market_data = json.load(f)
+        report_date = market_data.get("date", "")
+        market_snapshot = market_data.get("stocks", {})
+
+        prev_date, prev_stocks = fetch_previous_market_snapshot(report_date)
+        previous_market = {"date": prev_date, "stocks": prev_stocks}
+
+        top10 = screen_chip_resonance_top10(
+            market_snapshot=market_snapshot,
+            previous_market=previous_market,
+            market_names={k: v.get("name", k) for k, v in market_snapshot.items()},
+            market_sectors={},
+            limit=10,
+            trade_date=report_date,
+        )
+        return format_chip_resonance_report(top10, report_date, prev_date)
+
+    report_text = await asyncio.to_thread(_fetch_resonance)
+    if len(report_text) <= 1900:
+        await interaction.followup.send(report_text)
+    else:
+        chunks = [report_text[i:i + 1900] for i in range(0, len(report_text), 1900)]
+        for chunk in chunks:
+            await interaction.followup.send(chunk)
+
+
 @client.event
 async def on_ready():
     logger.info("Discord Bot 已成功連線，使用者：%s (ID: %s)", client.user, client.user.id)
@@ -242,11 +285,11 @@ async def on_ready():
     await client.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="台股行情 | /stock /news /alert /chip",
+            name="台股行情 | /stock /chip /resonance",
         )
     )
     print(f"NotifyRobot Discord 機器人已上線！(使用者: {client.user})")
-    print("指令清單: /stock, /news, /alert, /alart, /chip")
+    print("指令清單: /stock, /news, /alert, /alart, /chip, /resonance")
 
 
 def start_discord_bot(token: Optional[str] = None):
