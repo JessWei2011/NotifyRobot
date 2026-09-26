@@ -160,8 +160,9 @@ def dispatch_discord_message(
     chip_channel_id = os.getenv("DISCORD_CHIP_CHANNEL_ID", "").strip()
     general_channel_id = os.getenv("DISCORD_CHANNEL_ID", "").strip()
 
-    # 三大法人買賣超榜單與籌碼共振Top10等籌碼資料分流至 DISCORD_CHIP_CHANNEL_ID（#籌碼資料）
-    if report_type in {"screener_buyers", "screener_sellers", "screener_consecutive", "chip_resonance"}:
+    # 三大法人買賣超榜單與波段連買等大量籌碼策略資料分流至 DISCORD_CHIP_CHANNEL_ID（#籌碼資料）
+    # 台股長短線籌碼共振 Top 10 (chip_resonance) 則推播至 DISCORD_CHANNEL_ID（#台股通知）
+    if report_type in {"screener_buyers", "screener_sellers", "screener_consecutive"}:
         target_channel_id = chip_channel_id or general_channel_id
     else:
         target_channel_id = general_channel_id
