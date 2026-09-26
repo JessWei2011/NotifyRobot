@@ -74,6 +74,7 @@ from src.notifier import (
     SendResult,
     answer_callback_query,
     format_big_holder_message,
+    format_big_holder_market_rankings,
     format_consecutive_buyers_message,
     format_daily_buyers_message,
     format_daily_sellers_message,
@@ -160,9 +161,9 @@ def dispatch_discord_message(
     chip_channel_id = os.getenv("DISCORD_CHIP_CHANNEL_ID", "").strip()
     general_channel_id = os.getenv("DISCORD_CHANNEL_ID", "").strip()
 
-    # 三大法人買賣超榜單與波段連買等大量籌碼策略資料分流至 DISCORD_CHIP_CHANNEL_ID（#籌碼資料）
-    # 台股長短線籌碼共振 Top 10 (chip_resonance) 則推播至 DISCORD_CHANNEL_ID（#台股通知）
-    if report_type in {"screener_buyers", "screener_sellers", "screener_consecutive"}:
+    # 三大法人買賣超榜單、波段連買、全市場大戶排行等分流至 DISCORD_CHIP_CHANNEL_ID（#籌碼資料）
+    # 台股長短線籌碼共振 Top 10 (chip_resonance) 與自選股週報 (big_holders) 則推播至 DISCORD_CHANNEL_ID（#台股通知）
+    if report_type in {"screener_buyers", "screener_sellers", "screener_consecutive", "big_holder_rankings"}:
         target_channel_id = chip_channel_id or general_channel_id
     else:
         target_channel_id = general_channel_id
@@ -456,37 +457,59 @@ def main():
             # 2. 產出專屬 Markdown 報表
             resonance_report_text = format_chip_resonance_report(resonance_top10, report_date, baseline_date)
 
-        # 組裝週報訊息（將共振榜單附加於自選股大戶週報中）
-        message = format_big_holder_message(report_date, previous.get("date") if previous else None, rows, rankings)
-        if resonance_report_text:
-            message += f"\n\n{resonance_report_text}"
+        # 1. 產出【自選股大戶籌碼週報】（純自選股部分，推播至台股通知主頻道）
+        watchlist_message = format_big_holder_message(
+            report_date, baseline_date, rows, rankings=None, include_rankings=False
+        )
+
+        # 2. 產出【全市場大戶籌碼增幅排行榜】（400張與千張Top10，推播至籌碼資料頻道）
+        market_rankings_message = format_big_holder_market_rankings(
+            report_date, baseline_date, rankings
+        )
 
         if args.dry_run:
-            print(message)
+            print("=== 【1. 自選股大戶籌碼週報 (主頻道)】 ===")
+            print(watchlist_message)
+            if resonance_report_text:
+                print("\n=== 【2. 長短線籌碼共振 Top 10 (主頻道)】 ===")
+                print(resonance_report_text)
+            print("\n=== 【3. 全市場大戶增幅排行榜 (籌碼頻道)】 ===")
+            print(market_rankings_message)
             return 0
+
         if not telegram_enabled and not discord_enabled:
             logger.error("Telegram 與 Discord 通知皆已關閉")
             return 1
         if telegram_enabled and (not token or not chat_id):
             logger.error("Telegram 已啟用但未設定 TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID")
             return 1
+
         state = NotificationState(BASE_DIR / "data" / "notification_state.sqlite3")
-        delivered = send_report(
-            token, chat_id, report_date, "big_holders", message, state, args.force,
+
+        # 1. 推播【自選股大戶籌碼週報】至台股通知頻道
+        delivered_watchlist = send_report(
+            token, chat_id, report_date, "big_holders", watchlist_message, state, args.force,
             notification_cfg.get("enable_ack_button", False), notification_cfg.get("max_retries", 3), telegram_enabled, discord_enabled,
         )
 
-        # 另外單獨將「長短線籌碼共振 Top 10」推播至 Discord #籌碼資料頻道
-        if delivered and discord_enabled and resonance_report_text:
+        # 2. 推播【長短線籌碼共振 Top 10】至台股通知頻道
+        if delivered_watchlist and discord_enabled and resonance_report_text:
             send_report(
                 token, chat_id, report_date, "chip_resonance", resonance_report_text, state, args.force,
                 False, notification_cfg.get("max_retries", 3), False, True,
             )
 
-        if delivered:
+        # 3. 推播【全市場大戶增幅排行榜】（400張/千張 Top 10）至籌碼資料頻道
+        if delivered_watchlist and discord_enabled and market_rankings_message:
+            send_report(
+                token, chat_id, report_date, "big_holder_rankings", market_rankings_message, state, args.force,
+                False, notification_cfg.get("max_retries", 3), False, True,
+            )
+
+        if delivered_watchlist:
             save_snapshot(snapshot_path, report_date, snapshot)
             save_snapshot(market_snapshot_path, report_date, market_snapshot)
-        return 0 if delivered else 1
+        return 0 if delivered_watchlist else 1
 
     if args.check_acks:
         if not token:

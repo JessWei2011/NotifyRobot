@@ -254,7 +254,9 @@ def format_big_holder_message(
     previous_date: str | None,
     rows: List[Dict[str, Any]],
     rankings: Dict[str, List[Dict[str, Any]]] | None = None,
+    include_rankings: bool = False,
 ) -> str:
+    """產出自選股大戶籌碼週報（預設純自選股部分）"""
     lines = ["🧩 *【自選股大戶籌碼週報】*", f"📅 集保資料日：`{report_date}`"]
     if previous_date:
         lines.append(f"比較基準：`{previous_date}`")
@@ -281,10 +283,41 @@ def format_big_holder_message(
             conclusion = "大戶結構大致持平。"
         lines.append(f"💡 結論：{conclusion}")
         lines.append("")
-    if rankings is None:
+
+    if include_rankings and rankings:
+        for group, label in (("400", "400 張以上大戶"), ("1000", "千張大戶")):
+            lines.extend(["──────────────────────", f"📈 *【本週{label}持股比例增加 Top 10】*"])
+            entries = rankings.get(group, [])
+            if not entries:
+                lines.append("   本週無持股比例增加的標的")
+                continue
+            for index, entry in enumerate(entries, 1):
+                lines.append(
+                    f"{index}. 🔷 **{entry['code']} {entry['name']}**｜"
+                    f"`{entry['ratio']:.1f}%`（{entry['change']:+.2f}pt）"
+                )
+
+    lines.extend(["──────────────────────", "💡 400 張以上含 400–999 張與千張大戶；資料每週更新一次。"])
+    return "\n".join(lines)
+
+
+def format_big_holder_market_rankings(
+    report_date: str,
+    previous_date: str | None,
+    rankings: Dict[str, List[Dict[str, Any]]] | None,
+) -> str:
+    """產出全市場400張與千張大戶持股比例增加排行榜（推送到籌碼頻道）"""
+    lines = [
+        "📊 *【全市場大戶籌碼增幅排行榜】*",
+        f"📅 集保資料日：`{report_date}`",
+    ]
+    if previous_date:
+        lines.append(f"比較基準：`{previous_date}`")
+
+    if not rankings:
         lines.extend([
             "──────────────────────",
-            "📊 全市場 Top 10：本週已建立比較基準，下週起依持股比例增加幅度排行。",
+            "本週無全市場排行資料或正在建立比較基準。",
         ])
     else:
         for group, label in (("400", "400 張以上大戶"), ("1000", "千張大戶")):
@@ -298,7 +331,8 @@ def format_big_holder_message(
                     f"{index}. 🔷 **{entry['code']} {entry['name']}**｜"
                     f"`{entry['ratio']:.1f}%`（{entry['change']:+.2f}pt）"
                 )
-    lines.extend(["──────────────────────", "💡 400 張以上含 400–999 張與千張大戶；資料每週更新一次。"])
+
+    lines.extend(["──────────────────────", "💡 全市場普通股每週更新一次；400 張以上含 400–999 張與千張大戶。"])
     return "\n".join(lines)
 
 def format_screener_message(
