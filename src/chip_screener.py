@@ -184,8 +184,8 @@ def screen_chip_resonance_top10(
         is_ai = code in AI_SUPPLY_CHAIN_MAP
         ai_tag = AI_SUPPLY_CHAIN_MAP.get(code, "")
 
-        # 候選池初篩權重：AI 概念優先給予額外加權
-        initial_score = (change_1000 * 10) + (15.0 if is_ai else 0.0)
+        # 候選池初篩權重：以大戶增幅為依據，不人為加權特定產業
+        initial_score = change_1000 * 10.0
 
         candidates.append({
             "code": code,
@@ -199,7 +199,7 @@ def screen_chip_resonance_top10(
         })
 
     if not candidates:
-        logger.info("本週未篩出千張大戶增加之電子股")
+        logger.info("本週未篩出千張大戶增加之個股")
         return []
 
     # 排序初選池，取前 35 檔進行第二階段分點查詢
@@ -207,7 +207,7 @@ def screen_chip_resonance_top10(
     top_candidates = candidates[:35]
     query_codes = [c["code"] for c in top_candidates]
 
-    logger.info("已篩出 %d 檔大戶吃貨電子股，正在查詢近 5 日券商分點集中度...", len(query_codes))
+    logger.info("已篩出 %d 檔大戶吃貨個股，正在查詢近 5 日券商分點集中度...", len(query_codes))
 
     # 第二階段：平行查詢 5D 券商分點集中度
     broker_data = fetch_watchlist_broker_chips(query_codes, target_date=trade_date)
@@ -226,10 +226,9 @@ def screen_chip_resonance_top10(
 
         c1_val = c1 if c1 is not None else 0.0
 
-        # 最終綜合共振評分公式：
-        # 大戶存量增幅 (權重 x10) + 5D短線集中度 (權重 x2.5) + 1D短線衝刺 (權重 x0.5) + AI加權 (+15)
-        ai_bonus = 15.0 if item["is_ai"] else 0.0
-        final_score = (item["change_1000"] * 10.0) + (c5 * 2.5) + (c1_val * 0.5) + ai_bonus
+        # 最終綜合共振評分公式（已扣除 AI 題材加分，完全回歸客觀籌碼數據，不因產業風頭人為傾斜）：
+        # 大戶存量增幅 (權重 x10) + 5D短線集中度 (權重 x2.5) + 1D短線衝刺 (權重 x0.5)
+        final_score = (item["change_1000"] * 10.0) + (c5 * 2.5) + (c1_val * 0.5)
 
         resonated_stocks.append({
             **item,
@@ -253,18 +252,19 @@ def format_chip_resonance_report(
 ) -> str:
     """將籌碼共振 Top 10 格式化為 Markdown 報告（適合 Discord 頻道與週報）"""
     lines = [
-        "🚀 *【台股長短線籌碼共振 Top 10（電子／AI 供應鏈）】*",
+        "🚀 *【台股長短線籌碼共振 Top 10】*",
         f"📅 集保週日：`{report_date}` ｜ 比較基準：`{baseline_date}`",
         "🎯 *選股核心*：千張大戶逐週吸籌 ＋ 近5日券商主力分點同步買超",
         "──────────────────────",
     ]
 
     if not stocks:
-        lines.append("本週電子族群中無同時滿足「千張大戶增加 ＋ 5D分點集中度>0」之個股。")
+        lines.append("本週無同時滿足「千張大戶增加 ＋ 5D分點集中度>0」之個股。")
         return "\n".join(lines)
 
     for idx, s in enumerate(stocks, 1):
-        ai_badge = f" 🤖【{s['ai_tag']}】" if s.get("is_ai") else ""
+        tag_str = s.get("ai_tag") or s.get("sector") or ""
+        tag_badge = f" 🏷️【{tag_str}】" if tag_str else ""
         c5_str = f"+{s['concentration_5d']:.1f}%" if s['concentration_5d'] > 0 else f"{s['concentration_5d']:.1f}%"
         c1_str = f"{s['concentration_1d']:+.1f}%" if s.get('concentration_1d') is not None else "—"
         
@@ -273,7 +273,7 @@ def format_chip_resonance_report(
             buyers = f"｜買方：{s['top_buyers_5d'][0].split('+')[0].strip()}"
 
         lines.append(
-            f"**{idx}.** 🔷 **{s['code']} {s['name']}**{ai_badge}\n"
+            f"**{idx}.** 🔷 **{s['code']} {s['name']}**{tag_badge}\n"
             f"   • 大戶籌碼：千張大戶 `{s['ratio_1000']:.1f}%`（`{s['change_1000']:+.2f}pt` 🔼）\n"
             f"   • 主力分點：5D集中度 `{c5_str}`（1D `{c1_str}`）{buyers}\n"
             f"   • 籌碼型態：{s['matrix_status']}（{s['matrix_action']}）｜共振分 `{s['final_score']}`\n"
@@ -298,18 +298,18 @@ def export_to_stockcenter_ranking(
     # 1. 寫入專屬獨立排行榜檔案：stock_chip_resonance_ranking.md
     target_md = sc_path / "stock_chip_resonance_ranking.md"
     table_lines = [
-        "# 🚀 台股長短線籌碼共振 Top 10（電子／AI 供應鏈）",
+        "# 🚀 台股長短線籌碼共振 Top 10",
         "",
-        f"> 集保統計日：{report_date}。篩選條件：限上市櫃電子股、千張大戶比例逐週上升、近5日券商分點集中度維持正值。",
+        f"> 集保統計日：{report_date}。篩選條件：千張大戶比例逐週上升、近5日券商分點集中度維持正值。",
         "",
-        "| 排名 | 代號 | 名稱 | AI族群標籤 | 千張大戶持股 | 本週大戶增幅 | 5D分點集中度 | 1D分點集中度 | 籌碼型態 | 共振評分 |",
+        "| 排名 | 代號 | 名稱 | 產業／族群標籤 | 千張大戶持股 | 本週大戶增幅 | 5D分點集中度 | 1D分點集中度 | 籌碼型態 | 共振評分 |",
         "|:---:|:---:|:---|:---|---:|---:|---:|---:|:---|---:|",
     ]
 
     for idx, s in enumerate(stocks, 1):
-        ai_label = s.get("ai_tag") or s.get("sector") or "電子"
+        tag_label = s.get("ai_tag") or s.get("sector") or "電子"
         table_lines.append(
-            f"| **{idx}** | `{s['code']}` | **{s['name']}** | {ai_label} | {s['ratio_1000']:.1f}% | +{s['change_1000']:.2f}pt | +{s['concentration_5d']:.1f}% | {s['concentration_1d']:+.1f}% | {s['matrix_status']} | **{s['final_score']}** |"
+            f"| **{idx}** | `{s['code']}` | **{s['name']}** | {tag_label} | {s['ratio_1000']:.1f}% | +{s['change_1000']:.2f}pt | +{s['concentration_5d']:.1f}% | {s['concentration_1d']:+.1f}% | {s['matrix_status']} | **{s['final_score']}** |"
         )
 
     table_lines.append("")
@@ -317,7 +317,7 @@ def export_to_stockcenter_ranking(
     table_lines.append("### 💡 判讀心法")
     table_lines.append("1. **長線存量鎖碼**：千張大戶比例上升，代表散戶籌碼沉澱，由公司大股東或外資投信主帳戶穩定吸收。")
     table_lines.append("2. **短線流量發動**：5D 分點集中度大於 0%，證明這不是沉睡中的存量，而是短線主力券商正在進場拉抬或吸籌。")
-    table_lines.append("3. **AI 供應鏈加成**：AI 相關個股具備長線產業基本面題材，長短線共振時波段爆發力最強。")
+    table_lines.append("3. **客觀籌碼共振**：扣除主觀產業偏好加分，完全回歸客觀籌碼數據，不論產業輪動至何處皆能公平反映共振強度。")
     table_lines.append("")
 
     full_md_content = "\n".join(table_lines)
@@ -334,27 +334,27 @@ def export_to_stockcenter_ranking(
             continue
         try:
             content = main_md.read_text(encoding="utf-8")
-            section_header = "## 🚀 長短線籌碼共振 Top 10（電子／AI 供應鏈）"
+            section_header = "## 🚀 長短線籌碼共振 Top 10"
             # 建立要嵌入的區塊
             embed_lines = [
                 section_header,
-                f"> 資料日期：{report_date}。條件：上市櫃電子股、千張大戶逐週增加 ＋ 5D主力分點集中度維持正值。",
+                f"> 資料日期：{report_date}。條件：千張大戶逐週增加 ＋ 5D主力分點集中度維持正值。",
                 "",
-                "| 排名 | 代號 | 股票名稱 | 核心AI題材 | 千張大戶比例 | 大戶增幅 | 5D集中度 | 1D集中度 | 籌碼矩陣型態 | 共振評分 |",
+                "| 排名 | 代號 | 股票名稱 | 產業／族群標籤 | 千張大戶比例 | 大戶增幅 | 5D集中度 | 1D集中度 | 籌碼矩陣型態 | 共振評分 |",
                 "|:---:|:---:|:---|:---|---:|---:|---:|---:|:---|---:|",
             ]
             for idx, s in enumerate(stocks, 1):
-                ai_label = s.get("ai_tag") or s.get("sector") or "電子"
+                tag_label = s.get("ai_tag") or s.get("sector") or "電子"
                 embed_lines.append(
-                    f"| **{idx}** | `{s['code']}` | **{s['name']}** | {ai_label} | {s['ratio_1000']:.1f}% | +{s['change_1000']:.2f}pt | +{s['concentration_5d']:.1f}% | {s['concentration_1d']:+.1f}% | {s['matrix_status']} | **{s['final_score']}** |"
+                    f"| **{idx}** | `{s['code']}` | **{s['name']}** | {tag_label} | {s['ratio_1000']:.1f}% | +{s['change_1000']:.2f}pt | +{s['concentration_5d']:.1f}% | {s['concentration_1d']:+.1f}% | {s['matrix_status']} | **{s['final_score']}** |"
                 )
             embed_lines.append("")
             embed_block = "\n".join(embed_lines)
 
             # 若已存在舊章節則替換，否則追加於檔案末尾
-            if section_header in content:
-                pattern = re.compile(rf"{re.escape(section_header)}.*?(?=\n## |\Z)", re.DOTALL)
-                new_content = pattern.sub(embed_block, content)
+            old_pattern = re.compile(r"## 🚀 長短線籌碼共振 Top 10.*?(?=\n## |\Z)", re.DOTALL)
+            if old_pattern.search(content):
+                new_content = old_pattern.sub(embed_block, content)
             else:
                 new_content = content.rstrip() + "\n\n---\n\n" + embed_block
 
@@ -368,17 +368,17 @@ def export_to_stockcenter_ranking(
     if inst_md.exists():
         try:
             content = inst_md.read_text(encoding="utf-8")
-            section_header = "## ⑤ 🚀 長短線籌碼共振 TOP 10（電子／AI 供應鏈）"
+            section_header = "## ⑤ 🚀 長短線籌碼共振 TOP 10"
             embed_lines = [
                 section_header,
                 "",
-                "| 排名 | 股票代號 | 股票名稱 | AI族群標籤 | 千張大戶持股 | 5D集中度 | 共振評分 |",
+                "| 排名 | 股票代號 | 股票名稱 | 產業／族群標籤 | 千張大戶持股 | 5D集中度 | 共振評分 |",
                 "|---:|:---:|:---|:---|---:|---:|---:|",
             ]
             for idx, s in enumerate(stocks, 1):
-                ai_label = s.get("ai_tag") or s.get("sector") or "電子"
+                tag_label = s.get("ai_tag") or s.get("sector") or "電子"
                 embed_lines.append(
-                    f"| {idx} | `{s['code']}` | {s['name']} | {ai_label} | {s['ratio_1000']:.1f}%(+{s['change_1000']:.2f}pt) | +{s['concentration_5d']:.1f}% | {s['final_score']} |"
+                    f"| {idx} | `{s['code']}` | {s['name']} | {tag_label} | {s['ratio_1000']:.1f}%(+{s['change_1000']:.2f}pt) | +{s['concentration_5d']:.1f}% | {s['final_score']} |"
                 )
             embed_lines.append("")
             embed_block = "\n".join(embed_lines)
