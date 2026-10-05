@@ -190,7 +190,7 @@ def fetch_twse_market_institutional_amounts(date_str: str) -> Optional[Dict[str,
         if None in (foreign, trust, dealer_self, dealer_hedge, total):
             logger.warning("日期 %s 的上市大盤法人金額欄位不完整", date_str)
             return None
-        return {
+        res_dict = {
             "foreign": foreign,
             "trust": trust,
             "dealer": dealer_self,  # 排除避險，僅計自行買賣
@@ -199,6 +199,23 @@ def fetch_twse_market_institutional_amounts(date_str: str) -> Optional[Dict[str,
             "total": foreign + trust + dealer_self,  # 排除避險合計
             "twse_total": total,  # 證交所官方含避險合計
         }
+
+        # 抓取大盤成交金額（元）
+        try:
+            fmtqik_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={date_str}&response=json"
+            fmt_res = requests.get(fmtqik_url, timeout=15)
+            if fmt_res.status_code == 200:
+                fmt_payload = fmt_res.json()
+                d_obj = datetime.datetime.strptime(date_str, "%Y%m%d")
+                roc_date_prefix = f"{d_obj.year - 1911}/{d_obj.month:02d}/{d_obj.day:02d}"
+                for row in fmt_payload.get("data", []):
+                    if len(row) >= 3 and row[0].strip() == roc_date_prefix:
+                        res_dict["trade_value"] = _clean_int(row[2])
+                        break
+        except Exception as e_vol:
+            logger.warning("抓取 TWSE 大盤成交金額失敗 (%s): %s", date_str, e_vol)
+
+        return res_dict
     except Exception as exc:
         logger.error("抓取 TWSE 大盤法人金額失敗 (%s): %s", date_str, exc)
         return None
@@ -362,6 +379,124 @@ def get_margin_balances(date_str: str) -> Dict[str, Dict[str, Any]]:
         values["margin_change"] = current - previous
         values["margin_change_rate"] = (current - previous) / previous * 100 if previous else None
     return balances
+
+
+def fetch_watchlist_quotes(codes: List[str], date_str: str) -> Dict[str, Dict[str, Any]]:
+    """取得自選股當日之收盤行情（收盤價、漲跌幅、最高價、最低價）。
+
+    優先嘗試 Yahoo 批次即時行情（若為當日），並以 TWSE / TPEX 官方收盤行情作為備援或歷史日資料源。
+    """
+    quotes: Dict[str, Dict[str, Any]] = {}
+    if not codes:
+        return quotes
+
+    today_str = datetime.date.today().strftime("%Y%m%d")
+
+    # 1. 若為當日，優先使用 Yahoo 批次介面
+    if date_str == today_str:
+        try:
+            syms = []
+            for c in codes:
+                syms.extend([f"{c}.TW", f"{c}.TWO"])
+            sym_str = ",".join(syms)
+            url = (
+                f"https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.stockList;"
+                f"fields=symbol%2Cprice%2Cchange%2CchangePercent%2Chigh%2Clow%2Copen%2CpreviousClose;"
+                f"symbols={sym_str}"
+            )
+            res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6).json()
+            for r in res:
+                if not r.get("symbolName"):
+                    continue
+                code = r.get("symbol", "").split(".")[0]
+                if code in quotes:
+                    continue
+                price_fmt = r.get("price", {}).get("fmt", "-")
+                pct_str = r.get("changePercent", "-")
+                high_fmt = r.get("regularMarketDayHigh", {}).get("fmt", "-")
+                low_fmt = r.get("regularMarketDayLow", {}).get("fmt", "-")
+                raw_chg = r.get("change", {}).get("raw", 0)
+                quotes[code] = {
+                    "close_price": price_fmt,
+                    "change_percent": pct_str,
+                    "high_price": high_fmt,
+                    "low_price": low_fmt,
+                    "change_raw": raw_chg,
+                }
+            if len(quotes) == len(codes):
+                return quotes
+        except Exception as exc:
+            logger.debug("Yahoo 批次行情查詢略過或失敗: %s", exc)
+
+    code_set = set(codes)
+
+    # 2. 查 TWSE 每日收盤行情 (MI_INDEX)
+    try:
+        twse_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={date_str}&type=ALLBUT0999&response=json"
+        twse_res = requests.get(twse_url, timeout=15).json()
+        for t in twse_res.get("tables", []):
+            if "每日收盤行情" in t.get("title", ""):
+                for row in t.get("data", []):
+                    c = str(row[0]).strip()
+                    if c in code_set and c not in quotes:
+                        c_str = str(row[8]).strip().replace(",", "")
+                        d_str = str(row[10]).strip().replace(",", "")
+                        diff_signed = 0.0
+                        pct_str = "-"
+                        try:
+                            c_val = float(c_str)
+                            d_val = float(d_str)
+                            sign = "-" if "-" in str(row[9]) else ("+" if "+" in str(row[9]) else "")
+                            diff_signed = float(f"{sign}{d_val}")
+                            prev = c_val - diff_signed
+                            pct_str = f"{(diff_signed / prev * 100):+.2f}%" if prev > 0 else "0.00%"
+                        except Exception:
+                            pass
+                        quotes[c] = {
+                            "close_price": row[8],
+                            "change_percent": pct_str,
+                            "high_price": row[6],
+                            "low_price": row[7],
+                            "change_raw": diff_signed,
+                        }
+                break
+    except Exception as exc:
+        logger.debug("TWSE MI_INDEX 收盤行情查詢失敗 (%s): %s", date_str, exc)
+
+    # 3. 查 TPEX 上櫃每日收盤行情
+    try:
+        d = datetime.datetime.strptime(date_str, "%Y%m%d")
+        roc_date = f"{d.year - 1911}/{d.month:02d}/{d.day:02d}"
+        tpex_url = f"https://www.tpex.org.tw/web/stock/aftertrading/otc_quotes_no1430/stk_wn1430_result.php?l=zh-tw&d={roc_date}&se=EW"
+        tpex_res = requests.get(tpex_url, timeout=15).json()
+        for t in tpex_res.get("tables", []):
+            for row in t.get("data", []):
+                c = str(row[0]).strip()
+                if c in code_set and c not in quotes:
+                    c_str = str(row[2]).strip().replace(",", "")
+                    d_str = str(row[3]).strip().replace(",", "")
+                    diff_signed = 0.0
+                    pct_str = "-"
+                    try:
+                        c_val = float(c_str)
+                        d_val = float(d_str)
+                        diff_signed = d_val
+                        prev = c_val - d_val
+                        pct_str = f"{(d_val / prev * 100):+.2f}%" if prev > 0 else "0.00%"
+                    except Exception:
+                        pass
+                    quotes[c] = {
+                        "close_price": row[2],
+                        "change_percent": pct_str,
+                        "high_price": row[5],
+                        "low_price": row[6],
+                        "change_raw": diff_signed,
+                    }
+            break
+    except Exception as exc:
+        logger.debug("TPEX 收盤行情查詢失敗 (%s): %s", date_str, exc)
+
+    return quotes
 
 
 def _clean_broker_name(name: str) -> str:

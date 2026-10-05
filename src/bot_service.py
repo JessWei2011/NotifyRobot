@@ -5,7 +5,7 @@ import asyncio
 import datetime
 import discord
 from discord import app_commands
-from typing import Optional
+from typing import Optional, List
 
 from src.stock_query import (
     resolver,
@@ -35,19 +35,77 @@ def _format_lots(num: int) -> str:
     return "0 張 ▶️"
 
 
+async def stock_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    """
+    Discord 斜線指令股號／股名自動下拉提示（Autocomplete）。
+    使用者輸入中文或數字時，即時搜尋代號與簡稱並呈現「代號 名稱」選項。
+    """
+    try:
+        matches = resolver.search_stocks(current, limit=25)
+        return [
+            app_commands.Choice(
+                name=f"{m['code']} {m['name']}"[:100] if m.get("name") else m["code"],
+                value=m["code"],
+            )
+            for m in matches
+        ]
+    except Exception as exc:
+        logger.warning("Autocomplete 搜尋發生異常: %s", exc)
+        return []
+
+
+async def _resolve_command_code(interaction: discord.Interaction, user_input: str) -> Optional[str]:
+    """
+    解析使用者於指令參數輸入之代號或股名：
+    - 精確代號、精確股名或唯一匹配：回傳標準代號 (str)
+    - 多檔模糊匹配：以 ephemeral 私密訊息列出推薦候選清單，回傳 None
+    - 查無任何相符：以 ephemeral 私密訊息提示錯誤，回傳 None
+    """
+    clean_input = user_input.strip()
+    match_result = resolver.resolve_symbol_or_candidates(clean_input)
+    status = match_result.get("status")
+
+    if status == "exact":
+        return match_result["code"]
+
+    if status == "ambiguous":
+        candidates = match_result.get("candidates", [])
+        cand_lines = [f"• {c['code']} {c['name']}" for c in candidates[:15]]
+        msg = (
+            f"找不到完全相符的股票「{clean_input}」，您是不是要找：\n"
+            + "\n".join(cand_lines)
+            + "\n\n💡 提示：您可直接輸入完整名稱或代號，亦可利用指令輸入時跳出的自動下拉選單點選。"
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+        return None
+
+    # not_found
+    await interaction.response.send_message(
+        f"查無此股票代號或名稱「{clean_input}」，請確認是否正確。",
+        ephemeral=True,
+    )
+    return None
+
+
 # ==========================================
 # 1. /stock 指令：回傳整合 NotifyRobot 與 StockCenter 之個股全方位籌碼與量化指標報告
 # ==========================================
 @tree.command(name="stock", description="查詢個股完整籌碼報告與 StockCenter 量化指標標籤")
-@app_commands.describe(code="台股代號或名稱，例如 2330 或 穎崴")
+@app_commands.describe(code="台股代號或名稱，例如 2330 或 台積電")
+@app_commands.autocomplete(code=stock_autocomplete)
 async def slash_stock(interaction: discord.Interaction, code: str):
-    await interaction.response.defer()
-    clean_code = code.strip()
+    clean_code = await _resolve_command_code(interaction, code)
+    if not clean_code:
+        return
 
+    await interaction.response.defer()
     embed = await asyncio.to_thread(build_integrated_stock_embed, clean_code)
     if not embed:
         await interaction.followup.send(
-            f"查無此股票「{clean_code}」，請確認台股代號或名稱是否正確。",
+            f"查無此股票「{clean_code}」相關資料，請稍後再試。",
             ephemeral=True,
         )
         return
@@ -59,11 +117,14 @@ async def slash_stock(interaction: discord.Interaction, code: str):
 # 2. /news 指令：爬取新聞並由 AI 總結動態
 # ==========================================
 @tree.command(name="news", description="上網爬取個股最新新聞並由 AI 總結重點動態")
-@app_commands.describe(code="台股代號，例如 2330 或 3529")
+@app_commands.describe(code="台股代號或名稱，例如 2330 或 台積電")
+@app_commands.autocomplete(code=stock_autocomplete)
 async def slash_news(interaction: discord.Interaction, code: str):
-    await interaction.response.defer()
-    clean_code = code.strip().upper()
+    clean_code = await _resolve_command_code(interaction, code)
+    if not clean_code:
+        return
 
+    await interaction.response.defer()
     info = resolver.resolve(clean_code)
     if not info["exists"]:
         await interaction.followup.send(
@@ -108,9 +169,11 @@ async def slash_news(interaction: discord.Interaction, code: str):
 # 3. /alert 指令（支援 /alart）：查注意、警告、處置
 # ==========================================
 async def handle_alert_query(interaction: discord.Interaction, code: str):
-    await interaction.response.defer()
-    clean_code = code.strip().upper()
+    clean_code = await _resolve_command_code(interaction, code)
+    if not clean_code:
+        return
 
+    await interaction.response.defer()
     data = get_stock_alerts(clean_code)
     if not data.get("exists"):
         await interaction.followup.send(
@@ -191,13 +254,15 @@ async def handle_alert_query(interaction: discord.Interaction, code: str):
 
 
 @tree.command(name="alert", description="查詢個股注意與處置狀態（處置日期一律印出）")
-@app_commands.describe(code="台股代號，例如 2305, 3374, 3529")
+@app_commands.describe(code="台股代號或名稱，例如 2305 或 台積電")
+@app_commands.autocomplete(code=stock_autocomplete)
 async def slash_alert(interaction: discord.Interaction, code: str):
     await handle_alert_query(interaction, code)
 
 
 @tree.command(name="alart", description="查詢個股注意與處置狀態（同 /alert 指令）")
-@app_commands.describe(code="台股代號，例如 2305, 3374, 3529")
+@app_commands.describe(code="台股代號或名稱，例如 2305 或 台積電")
+@app_commands.autocomplete(code=stock_autocomplete)
 async def slash_alart(interaction: discord.Interaction, code: str):
     await handle_alert_query(interaction, code)
 
@@ -206,10 +271,14 @@ async def slash_alart(interaction: discord.Interaction, code: str):
 # 4. /chip 指令：外掛接入點（籌碼分析 + Qwen 專業評價）
 # ==========================================
 @tree.command(name="chip", description="整理個股籌碼（排除中實戶）並由本地 Qwen 評估短期趨勢")
-@app_commands.describe(code="台股代號，例如 2330 或 1815")
+@app_commands.describe(code="台股代號或名稱，例如 2330 或 台積電")
+@app_commands.autocomplete(code=stock_autocomplete)
 async def slash_chip(interaction: discord.Interaction, code: str):
+    clean_code = await _resolve_command_code(interaction, code)
+    if not clean_code:
+        return
+
     await interaction.response.defer()
-    clean_code = code.strip().upper()
 
     # 於背景線程呼叫外掛函式，避免阻塞 Discord 事件迴圈
     evaluation = await asyncio.to_thread(evaluate_stock_chip, clean_code)
@@ -266,6 +335,79 @@ async def slash_resonance(interaction: discord.Interaction):
             await interaction.followup.send(chunk)
 
 
+@tree.command(name="yt", description="輸入 YouTube 網址，由 AI 產出精華重點卡片 (加 -q 指定本機 Qwen，預設 Gemini)")
+@app_commands.describe(
+    url="YouTube 影片網址 (例如: https://www.youtube.com/watch?v=... 或 https://youtu.be/...)",
+    options="可選參數：輸入 -q 使用本機 Ollama Qwen，預設留空為 Gemini (支援自動容錯備援)"
+)
+async def cmd_yt(interaction: discord.Interaction, url: str, options: Optional[str] = None):
+    await interaction.response.defer(thinking=True)
+
+    # 判斷是否指定 -q
+    force_qwen = False
+    if options and "-q" in options.lower():
+        force_qwen = True
+
+    def _process_video():
+        from src.youtube_summarizer import (
+            extract_video_id,
+            get_video_info,
+            get_transcript_from_youtube,
+            download_audio_and_transcribe_whisper,
+            generate_youtube_summary_smart,
+            build_youtube_summary_embeds,
+        )
+
+        vid = extract_video_id(url.strip())
+        if not vid:
+            return None, "❌ 無法辨識此 YouTube 網址，請確認網址格式是否正確。"
+
+        try:
+            info = get_video_info(url.strip())
+        except Exception as e:
+            return None, f"❌ 讀取影片資訊失敗：{e}"
+
+        # 雙軌第一軌：抓字幕
+        transcript, source_desc = get_transcript_from_youtube(vid)
+
+        # 雙軌第二軌：Whisper 備援
+        if not transcript:
+            try:
+                transcript, source_desc = download_audio_and_transcribe_whisper(url.strip(), model_size="base")
+            except Exception as e:
+                return None, f"❌ 語音辨識轉錄失敗：{e}"
+
+        if not transcript:
+            return None, "❌ 無法取得該影片的字幕或語音內容。"
+
+        # 呼叫智慧摘要 (支援 -q 與自動 Fallback)
+        try:
+            summary, model_desc = generate_youtube_summary_smart(
+                transcript=transcript,
+                video_title=info.get("title", ""),
+                force_qwen=force_qwen
+            )
+            embeds = build_youtube_summary_embeds(
+                video_info=info,
+                raw_summary=summary,
+                source_desc=source_desc,
+                model_desc=model_desc
+            )
+            return embeds, None
+        except Exception as e:
+            return None, f"❌ AI 產出重點筆記失敗：{e}"
+
+    embeds, error_msg = await asyncio.to_thread(_process_video)
+
+    if error_msg:
+        await interaction.followup.send(error_msg)
+    elif embeds:
+        for idx, emb in enumerate(embeds):
+            await interaction.followup.send(embed=emb)
+            if idx < len(embeds) - 1:
+                await asyncio.sleep(0.5)
+
+
 @client.event
 async def on_ready():
     logger.info("Discord Bot 已成功連線，使用者：%s (ID: %s)", client.user, client.user.id)
@@ -282,14 +424,21 @@ async def on_ready():
     except Exception as exc:
         logger.error("同步斜線指令失敗: %s", exc)
 
+    # 3. 預先載入股票代號與名稱對照快取
+    try:
+        await asyncio.to_thread(resolver.refresh_if_needed)
+        logger.info("股票代號與簡稱對照快取預熱完成 (共 %d 檔)", len(resolver.twse_map) + len(resolver.tpex_map))
+    except Exception as exc:
+        logger.warning("預熱股票快取時略過: %s", exc)
+
     await client.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="台股行情 | /stock /chip /resonance",
+            name="台股行情 | /stock /chip /yt",
         )
     )
     print(f"NotifyRobot Discord 機器人已上線！(使用者: {client.user})")
-    print("指令清單: /stock, /news, /alert, /alart, /chip, /resonance")
+    print("指令清單: /stock, /news, /alert, /alart, /chip, /resonance, /yt")
 
 
 def start_discord_bot(token: Optional[str] = None):

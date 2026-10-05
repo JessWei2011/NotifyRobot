@@ -66,6 +66,14 @@ def add_broker_chip_data(items: List[Dict[str, Any]], broker_chips: Dict[str, Di
         item.update(broker_chips.get(item["code"], {}))
     return items
 
+
+def add_quote_data(items: List[Dict[str, Any]], quotes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """將當日個股收盤行情附加至自選股結果。"""
+    for item in items:
+        if item["code"] in quotes:
+            item.update(quotes[item["code"]])
+    return items
+
 def filter_dual_buyers(records: List[Dict[str, Any]], top_n: int = 10, min_lots: int = 300) -> List[Dict[str, Any]]:
     """
     策略一：外資與投信同步買超 (土洋同步作多)

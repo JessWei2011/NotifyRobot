@@ -20,6 +20,7 @@ class StockResolver:
     def __init__(self):
         self.twse_map: Dict[str, str] = {}
         self.tpex_map: Dict[str, str] = {}
+        self.name_to_code: Dict[str, str] = {}
         self.last_fetch: Optional[datetime.datetime] = None
 
     def refresh_if_needed(self):
@@ -34,6 +35,16 @@ class StockResolver:
             logger.warning("載入 TWSE 上市清單失敗: %s", exc)
 
         try:
+            r_etf = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=8).json()
+            for item in r_etf:
+                c = str(item.get("Code", "")).strip()
+                n = str(item.get("Name", "")).strip()
+                if c and n and c not in self.twse_map:
+                    self.twse_map[c] = n
+        except Exception as exc:
+            logger.debug("載入 TWSE 額外證券清單略過: %s", exc)
+
+        try:
             r2 = requests.get(
                 "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
                 timeout=8,
@@ -43,11 +54,25 @@ class StockResolver:
         except Exception as exc:
             logger.warning("載入 TPEx 上櫃清單失敗: %s", exc)
 
+        # 建立反向名稱對照表 (公司簡稱 -> 代號)
+        self.name_to_code = {}
+        for c, n in self.twse_map.items():
+            if n:
+                self.name_to_code[n] = c
+                self.name_to_code[n.upper()] = c
+        for c, n in self.tpex_map.items():
+            if n:
+                self.name_to_code[n] = c
+                self.name_to_code[n.upper()] = c
+
         self.last_fetch = now
 
     def resolve(self, code: str) -> Dict[str, Any]:
         self.refresh_if_needed()
         c = str(code).strip().upper()
+        # 若傳入為股票名稱且存在對照表，自動轉為代號
+        if c in self.name_to_code:
+            c = self.name_to_code[c]
         name = ""
         market = ""
 
@@ -111,6 +136,108 @@ class StockResolver:
             "exists": False,
             "raw_item": None,
         }
+
+    def search_stocks(self, query: str = "", limit: int = 25) -> List[Dict[str, str]]:
+        """
+        搜尋股票（代號或名稱比對，支援前綴與包含搜尋）。
+        回傳格式: [{"code": "2330", "name": "台積電", "market": "上市"}, ...]
+        """
+        self.refresh_if_needed()
+        q = str(query).strip().upper()
+
+        all_stocks: Dict[str, Dict[str, str]] = {}
+        for c, n in self.twse_map.items():
+            all_stocks[c] = {"code": c, "name": n, "market": "上市"}
+        for c, n in self.tpex_map.items():
+            if c not in all_stocks:
+                all_stocks[c] = {"code": c, "name": n, "market": "上櫃"}
+
+        if not q:
+            popular_codes = ["2330", "2317", "2454", "0050", "00878", "2382", "3231", "2603", "2881", "2882"]
+            pop_items = [all_stocks[code] for code in popular_codes if code in all_stocks]
+            seen_codes = {item["code"] for item in pop_items}
+            other_items = [item for code, item in all_stocks.items() if code not in seen_codes]
+            return (pop_items + other_items)[:limit]
+
+        exact_matches = []
+        code_prefix_matches = []
+        name_prefix_matches = []
+        code_substr_matches = []
+        name_substr_matches = []
+
+        for c, item in all_stocks.items():
+            n = item["name"]
+            n_up = n.upper()
+
+            if c == q or n_up == q:
+                exact_matches.append(item)
+            elif c.startswith(q):
+                code_prefix_matches.append(item)
+            elif n_up.startswith(q):
+                name_prefix_matches.append(item)
+            elif q in c:
+                code_substr_matches.append(item)
+            elif q in n_up:
+                name_substr_matches.append(item)
+
+        combined = []
+        seen = set()
+        for bucket in [exact_matches, code_prefix_matches, name_prefix_matches, code_substr_matches, name_substr_matches]:
+            for s in bucket:
+                if s["code"] not in seen:
+                    seen.add(s["code"])
+                    combined.append(s)
+
+        return combined[:limit]
+
+    def resolve_symbol_or_candidates(self, input_str: str) -> Dict[str, Any]:
+        """
+        全方位解析使用者輸入之股號或股名：
+        1. 精確代號或精確名稱 -> status: "exact", code: str, name: str
+        2. 若代號不在本地表但為合法代號格式，嘗試即時 resolve -> 若存在 status: "exact"
+        3. 模糊搜尋：
+           - 若僅有 1 檔相符 -> status: "exact", code: str, name: str
+           - 若有多檔相符 -> status: "ambiguous", candidates: List[Dict]
+           - 若 0 檔相符 -> status: "not_found", candidates: []
+        """
+        self.refresh_if_needed()
+        clean = str(input_str).strip()
+        clean_up = clean.upper()
+
+        if not clean:
+            return {"status": "not_found", "candidates": []}
+
+        # 1. 精確代號
+        if clean_up in self.twse_map:
+            return {"status": "exact", "code": clean_up, "name": self.twse_map[clean_up]}
+        if clean_up in self.tpex_map:
+            return {"status": "exact", "code": clean_up, "name": self.tpex_map[clean_up]}
+
+        # 2. 精確股名反查
+        if clean in self.name_to_code:
+            code = self.name_to_code[clean]
+            name = self.twse_map.get(code) or self.tpex_map.get(code) or clean
+            return {"status": "exact", "code": code, "name": name}
+        if clean_up in self.name_to_code:
+            code = self.name_to_code[clean_up]
+            name = self.twse_map.get(code) or self.tpex_map.get(code) or clean
+            return {"status": "exact", "code": code, "name": name}
+
+        # 3. 嘗試以純代號即時向 Yahoo 查驗
+        if re.match(r"^[0-9A-Za-z]{4,6}$", clean_up):
+            info = self.resolve(clean_up)
+            if info.get("exists"):
+                return {"status": "exact", "code": clean_up, "name": info.get("name", clean_up)}
+
+        # 4. 模糊比對
+        candidates = self.search_stocks(clean, limit=15)
+        if len(candidates) == 1:
+            cand = candidates[0]
+            return {"status": "exact", "code": cand["code"], "name": cand["name"]}
+        elif len(candidates) > 1:
+            return {"status": "ambiguous", "candidates": candidates}
+
+        return {"status": "not_found", "candidates": []}
 
 
 resolver = StockResolver()
@@ -688,7 +815,8 @@ def build_full_stock_watchlist_report(code: str) -> Optional[Dict[str, Any]]:
     if alerts.get("attention"):
         a = alerts["attention"]
         lines.append(f"   • 注意股票：公告日期 `{a.get('date', '')}`")
-        lines.append(f"     條款：{a.get('info', '')[:100]}...")
+        info_text = (a.get("info") or "")[:100]
+        lines.append(f"     條款：{info_text}...")
         has_alert = True
     if not has_alert:
         lines.append("   • 正常交易：未列入注意股票或處置管制名單。")

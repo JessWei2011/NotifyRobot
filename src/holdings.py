@@ -134,6 +134,8 @@ def fetch_big_order_flow(
     else:
         return {}
 
+    # Shioaji 的 ticks["ts"] 戳記是以 UTC 紀元對應台灣交易時間（即 09:00:00 對應 UTC 09:00:00 的 epoch 奈秒）
+    # 若誤設為 UTC+8 (tw_tz)，會被轉換成 05:25:00 UTC，導致 09:00 開盤首筆成交即 >= cutoff_ns 而直接中斷迴圈
     cutoff_dt = datetime.datetime(year, month, day, 13, 25, 0, tzinfo=datetime.timezone.utc)
     cutoff_ns = int(cutoff_dt.timestamp() * 1e9)
 

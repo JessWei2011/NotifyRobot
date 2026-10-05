@@ -4,3 +4,7 @@ shioaji>=1.2
 python-dotenv>=1.0.0
 discord.py>=2.3.0
 beautifulsoup4>=4.11.0
+yt-dlp
+youtube-transcript-api
+google-genai
+faster-whisper

@@ -51,6 +51,7 @@ from src.fetcher import (
     ensure_chip_history,
     fetch_company_name_map,
     fetch_watchlist_broker_chips,
+    fetch_watchlist_quotes,
     get_latest_institutional_data,
     get_latest_market_institutional_amounts,
     get_margin_balances,
@@ -59,6 +60,7 @@ from src.analyzer import (
     add_big_order_data,
     add_broker_chip_data,
     add_margin_data,
+    add_quote_data,
     analyze_watchlist,
     calculate_consecutive_buyers,
     filter_dual_buyers,
@@ -81,6 +83,7 @@ from src.notifier import (
     format_market_institutional_amount_message,
     format_screener_message,
     format_watchlist_message,
+    format_watchlist_messages,
     get_updates,
     send_discord_message,
     send_telegram_message,
@@ -374,16 +377,15 @@ def main():
             market_names.update({str(row["code"]).strip(): str(row["name"]).strip() for row in market_records})
         except Exception as exc:
             logger.warning("無法以盤後資料補齊大戶週報名稱，沿用既有名稱：%s", exc)
+        listed_otc_names = {}
         try:
             listed_otc_names = fetch_company_name_map()
             market_names.update(listed_otc_names)
         except Exception as exc:
             logger.warning("無法以交易所基本資料補齊大戶週報名稱：%s", exc)
-            return 1
         watchlist = [
             {**item, "name": market_names.get(str(item.get("code", "")).strip(), item.get("name", ""))}
             for item in watchlist
-            if str(item.get("code", "")).strip() in listed_otc_names
         ]
         codes = {str(item.get("code", "")).strip() for item in watchlist}
         try:
@@ -437,7 +439,9 @@ def main():
         for code, stock in market_snapshot.items():
             stock["name"] = market_names.get(code, stock.get("name", code))
         rows = build_big_holder_rows(watchlist, snapshot, previous)
-        rankings = build_big_holder_rankings(market_snapshot, previous_market, allowed_codes=set(listed_otc_names))
+        rankings = build_big_holder_rankings(
+            market_snapshot, previous_market, allowed_codes=set(listed_otc_names) if listed_otc_names else None
+        )
 
         # 執行長短線籌碼共振篩選（限制上市櫃電子股，AI供應鏈優先）
         from src.chip_screener import screen_chip_resonance_top10, format_chip_resonance_report, export_to_stockcenter_ranking
@@ -722,11 +726,19 @@ def main():
                 watchlist_results = add_broker_chip_data(watchlist_results, broker_chips)
         except Exception as e:
             logger.warning("抓取券商主力分點買賣超失敗：%s", e)
+    # 附加自選股收盤行情（收盤價、漲跌幅、最高價、最低價）
+    try:
+        quotes = fetch_watchlist_quotes([item["code"] for item in watchlist_results], trade_date)
+        if quotes:
+            watchlist_results = add_quote_data(watchlist_results, quotes)
+    except Exception as e:
+        logger.warning("抓取自選股行情失敗：%s", e)
+
     disposition_periods = get_active_disposition_periods({item["code"] for item in watchlist_results})
     for item in watchlist_results:
         if period := disposition_periods.get(item["code"]):
             item["disposition_period"] = period
-    watchlist_msg = format_watchlist_message(trade_date, watchlist_results)
+    watchlist_msgs = format_watchlist_messages(trade_date, watchlist_results)
 
     # 3. 籌碼歷史快取與波段資料維護
     state = NotificationState(BASE_DIR / "data" / "notification_state.sqlite3")
@@ -765,7 +777,11 @@ def main():
         print("\n" + "=" * 50)
         print("🔍 【Dry Run 預覽：自選股訊息】")
         print("=" * 50)
-        print(watchlist_msg)
+        for i, msg in enumerate(watchlist_msgs, 1):
+            if len(watchlist_msgs) > 1:
+                print(f"--- [自選股分段 {i}/{len(watchlist_msgs)}] ---")
+            print(msg)
+            print("")
         print("\n" + "=" * 50)
         print("🔍 【Dry Run 預覽：單日法人買超強勢榜】")
         print("=" * 50)
@@ -797,10 +813,15 @@ def main():
     max_retries = notification_cfg.get("max_retries", 3)
     sent_ok = True
 
-    # 發送自選股
+    # 發送自選股（若標的較多，會自動分段發送，避免被 Telegram/Discord 截斷）
     if notification_cfg.get("send_watchlist", True) and not args.screener_only:
-        logger.info("正在推送自選股分析報告...")
-        sent_ok &= send_report(token, chat_id, trade_date, "watchlist", watchlist_msg, state, args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled)
+        logger.info("正在推送自選股分析報告（共 %d 則）...", len(watchlist_msgs))
+        for idx, msg in enumerate(watchlist_msgs, 1):
+            report_type = "watchlist" if len(watchlist_msgs) == 1 else f"watchlist_part_{idx}"
+            sent_ok &= send_report(
+                token, chat_id, trade_date, report_type, msg, state,
+                args.force, enable_ack_button, max_retries, telegram_enabled, discord_enabled
+            )
 
     # 發送策略選股（分 3 則獨立發送）
     if notification_cfg.get("send_screener", True):

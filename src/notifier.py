@@ -148,105 +148,134 @@ def format_market_institutional_amount_message(
         val_str = f"{amt / 100_000_000:+,.1f} 億" if amt != 0 else "0.0 億"
         lines.append(f"{icon} *{label}*：{direction} `{val_str}`")
 
+    trade_val = summary.get("trade_value")
+    if trade_val is not None:
+        lines.append("──────────────────────")
+        lines.append(f"📊 *大盤成交金額*：`{trade_val / 100_000_000:,.1f} 億`")
+
     return "\n".join(lines)
 
-def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]) -> str:
-    """產出自選股推播訊息文字"""
-    lines = [
-        f"📊 *【自選股盤後籌碼動態】*",
-        f"📅 日期：`{date_str}`",
-        "──────────────────────"
-    ]
-
-    for item in watchlist_data:
-        code = item["code"]
-        name = item["name"]
-        if item.get("not_found"):
-            lines.append(f"*{code} {name}*")
-            lines.append("   ⚠️ 當日查無籌碼數據（可能未上市或暫停交易）")
-            if period := item.get("disposition_period"):
-                lines.append(f"   ❗ 處置日期：`{period[0]}` ～ `{period[1]}`")
-            lines.append("")
-            continue
-
-        f_str = _format_num(item["foreign_lots"])
-        t_str = _format_num(item["trust_lots"])
-        d_str = _format_num(item["dealer_lots"])
-        total_str = _format_num(item["total_lots"])
-
+def _format_watchlist_item(item: Dict[str, Any]) -> str:
+    """格式化單一個股之籌碼與行情資訊區塊"""
+    lines = []
+    code = item["code"]
+    name = item["name"]
+    if item.get("not_found"):
         lines.append(f"*{code} {name}*")
-        lines.append(f"   • 外資：{f_str}")
-        lines.append(f"   • 投信：{t_str}")
-        lines.append(f"   • 自營商：{d_str}")
-        lines.append(f"   • 法人合計：{total_str}")
-        if "broker_net_lots" in item:
-            b_net = item["broker_net_lots"]
-            b_net_str = _format_num(b_net)
-            b_buy = item.get("broker_buy_lots", 0)
-            b_sell = item.get("broker_sell_lots", 0)
-            lines.append(f"   • 主力分點：{b_net_str}（前15大買 `{b_buy:,}`／賣 `{b_sell:,}`）")
-
-            top_buyers = item.get("top_buyers", [])
-            top_sellers = item.get("top_sellers", [])
-            if top_buyers or top_sellers:
-                b_str = "、".join(top_buyers) if top_buyers else "無"
-                s_str = "、".join(top_sellers) if top_sellers else "無"
-                lines.append(f"   • 分點買賣：買【{b_str}】｜賣【{s_str}】")
-
-            c1 = item.get("concentration_1d", item.get("broker_concentration"))
-            c5 = item.get("concentration_5d")
-            matrix_status = item.get("matrix_status", "")
-            matrix_action = item.get("matrix_action", "")
-
-            top_b_5d = item.get("top_buyers_5d", [])
-            top_s_5d = item.get("top_sellers_5d", [])
-
-            if c5 is not None and c1 is not None:
-                conc_text = f"5D `{c5:+.1f}%` ｜ 1D `{c1:+.1f}%`"
-                diag_text = f"【{matrix_status}】" if matrix_status else ""
-                lines.append(f"   • 籌碼型態：{diag_text} 集中度 {conc_text}（{matrix_action}）")
-            elif c1 is not None:
-                conc_text = f"`{c1:+.1f}%`"
-                lines.append(f"   • 籌碼流向：集中度 {conc_text}")
-
-            if top_b_5d or top_s_5d:
-                b5_str = "、".join(top_b_5d[:2]) if top_b_5d else "無"
-                s5_str = "、".join(top_s_5d[:2]) if top_s_5d else "無"
-                lines.append(f"   • 5日波段：買【{b5_str}】｜賣【{s5_str}】")
-
-            # 隔日衝主力警戒
-            day_trading_brokers = [
-                "凱基-台北", "凱基台北", "富邦-建國", "富邦建國", "元大-土城永寧", "土城永寧",
-                "富邦-忠孝", "國泰-敦南", "群益金鼎-大安", "兆豐-大同", "元大-北府", "華南永昌-世貿", "凱基-松山"
-            ]
-            hit_dt = []
-            for b in top_buyers:
-                for dt in day_trading_brokers:
-                    if dt in b:
-                        hit_dt.append(b.split("+")[0].strip())
-                        break
-            if hit_dt:
-                lines.append(f"   • 隔日衝警戒：⚡ 買方見【{'、'.join(hit_dt)}】隔日衝大戶，次日開盤切勿追高！")
-        if "big_order_net_lots" in item:
-            net_lots = item["big_order_net_lots"]
-            net_str = _format_num(net_lots)
-            buy_lots = item.get("big_order_buy_lots", 0)
-            sell_lots = item.get("big_order_sell_lots", 0)
-            pct = item.get("big_order_volume_ratio")
-            pct_text = f"｜佔比 `{pct:.1f}%`" if pct is not None else ""
-            t_wan = item.get("big_order_threshold_wan")
-            t_text = f"單筆≥{t_wan}萬｜" if t_wan else ""
-            lines.append(f"   • 大戶力道：{net_str}（{t_text}買 `{buy_lots:,}`／賣 `{sell_lots:,}`{pct_text}）")
-        if "margin_current" in item:
-            change = item["margin_change"]
-            rate = item.get("margin_change_rate")
-            rate_text = "—" if rate is None else f"{rate:+.2f}%"
-            lines.append(f"   • 融資：`{item['margin_current']:,} 張`（{change:+,} 張｜{rate_text}）")
+        lines.append("   ⚠️ 當日查無籌碼數據（可能未上市或暫停交易）")
         if period := item.get("disposition_period"):
             lines.append(f"   ❗ 處置日期：`{period[0]}` ～ `{period[1]}`")
-        lines.append("")
+        return "\n".join(lines)
+
+    f_str = _format_num(item["foreign_lots"])
+    t_str = _format_num(item["trust_lots"])
+    d_str = _format_num(item["dealer_lots"])
+    total_str = _format_num(item["total_lots"])
+
+    lines.append(f"*{code} {name}*")
+    if "close_price" in item:
+        close_p = item["close_price"]
+        pct = item.get("change_percent", "-")
+        h_p = item.get("high_price", "-")
+        l_p = item.get("low_price", "-")
+        chg_raw = item.get("change_raw", 0)
+        icon = "🔺" if (isinstance(chg_raw, (int, float)) and chg_raw > 0) or str(pct).startswith("+") else (
+            "🔻" if (isinstance(chg_raw, (int, float)) and chg_raw < 0) or str(pct).startswith("-") else "➖"
+        )
+        lines.append(f"   • 行情：`{close_p}`（{icon} `{pct}`）｜ 高 `{h_p}` ｜ 低 `{l_p}`")
+    lines.append(f"   • 外資：{f_str}")
+    lines.append(f"   • 投信：{t_str}")
+    lines.append(f"   • 自營商：{d_str}")
+    lines.append(f"   • 法人合計：{total_str}")
+    if "broker_net_lots" in item:
+        b_net = item["broker_net_lots"]
+        b_net_str = _format_num(b_net)
+        lines.append(f"   • 主力分點：{b_net_str}")
+
+        c1 = item.get("concentration_1d", item.get("broker_concentration"))
+        c5 = item.get("concentration_5d")
+        matrix_status = item.get("matrix_status", "")
+        matrix_action = item.get("matrix_action", "")
+
+        if c5 is not None and c1 is not None:
+            conc_text = f"5D `{c5:+.1f}%` ｜ 1D `{c1:+.1f}%`"
+            diag_text = f"【{matrix_status}】" if matrix_status else ""
+            lines.append(f"   • 籌碼型態：{diag_text} 集中度 {conc_text}（{matrix_action}）")
+        elif c1 is not None:
+            conc_text = f"`{c1:+.1f}%`"
+            lines.append(f"   • 籌碼流向：集中度 {conc_text}")
+    if "big_order_net_lots" in item:
+        net_lots = item["big_order_net_lots"]
+        net_str = _format_num(net_lots)
+        buy_lots = item.get("big_order_buy_lots", 0)
+        sell_lots = item.get("big_order_sell_lots", 0)
+        pct = item.get("big_order_volume_ratio")
+        pct_text = f"｜佔比 `{pct:.1f}%`" if pct is not None else ""
+        t_wan = item.get("big_order_threshold_wan")
+        t_text = f"單筆≥{t_wan}萬｜" if t_wan else ""
+        lines.append(f"   • 大戶力道：{net_str}（{t_text}買 `{buy_lots:,}`／賣 `{sell_lots:,}`{pct_text}）")
+    if "margin_current" in item:
+        change = item["margin_change"]
+        rate = item.get("margin_change_rate")
+        rate_text = "—" if rate is None else f"{rate:+.2f}%"
+        lines.append(f"   • 融資：`{item['margin_current']:,} 張`（{change:+,} 張｜{rate_text}）")
+    if period := item.get("disposition_period"):
+        lines.append(f"   ❗ 處置日期：`{period[0]}` ～ `{period[1]}`")
 
     return "\n".join(lines)
+
+
+def format_watchlist_messages(
+    date_str: str,
+    watchlist_data: List[Dict[str, Any]],
+    max_chunk_chars: int = 3500,
+) -> List[str]:
+    """產出自選股推播訊息清單；若標的過多則自動拆分為多則訊息，避免 Telegram/Discord 長度上限截斷。"""
+    if not watchlist_data:
+        return [
+            f"📊 *【自選股盤後籌碼動態】*\n📅 日期：`{date_str}`\n──────────────────────\n無自選股資料"
+        ]
+
+    blocks = [_format_watchlist_item(item) for item in watchlist_data]
+
+    # 動態分組，確保每組加上標頭後皆不超過 max_chunk_chars
+    chunks: List[List[str]] = []
+    current_chunk: List[str] = []
+    base_header_len = len(f"📊 *【自選股盤後籌碼動態】 (9/9)*\n📅 日期：`{date_str}`\n──────────────────────\n")
+    current_len = base_header_len
+
+    for block in blocks:
+        block_len = len(block) + 2  # 加換行分隔
+        if current_chunk and (current_len + block_len > max_chunk_chars):
+            chunks.append(current_chunk)
+            current_chunk = [block]
+            current_len = base_header_len + block_len
+        else:
+            current_chunk.append(block)
+            current_len += block_len
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    total_chunks = len(chunks)
+    messages = []
+    for idx, chunk in enumerate(chunks, 1):
+        suffix = f" ({idx}/{total_chunks})" if total_chunks > 1 else ""
+        header_lines = [
+            f"📊 *【自選股盤後籌碼動態】*{suffix}",
+            f"📅 日期：`{date_str}`",
+            "──────────────────────"
+        ]
+        body = "\n\n".join(chunk)
+        messages.append("\n".join(header_lines) + "\n" + body)
+
+    return messages
+
+
+def format_watchlist_message(date_str: str, watchlist_data: List[Dict[str, Any]]) -> str:
+    """產出自選股推播訊息文字（若超過單則長度限制，回傳第一則；建議改用 format_watchlist_messages）。"""
+    msgs = format_watchlist_messages(date_str, watchlist_data)
+    return msgs[0] if msgs else ""
 
 
 def format_big_holder_message(
@@ -262,7 +291,7 @@ def format_big_holder_message(
         lines.append(f"比較基準：`{previous_date}`")
     lines.append("──────────────────────")
     for index, item in enumerate(rows, 1):
-        lines.append(f"{index}. 🔷 **{item['code']} {item['name']}**")
+        lines.append(f"{index}. *{item['code']} {item['name']}*")
         change_400 = item["ratio_change_400"]
         change_1000 = item["ratio_change_1000"]
         if change_400 is None or change_1000 is None:
@@ -293,7 +322,7 @@ def format_big_holder_message(
                 continue
             for index, entry in enumerate(entries, 1):
                 lines.append(
-                    f"{index}. 🔷 **{entry['code']} {entry['name']}**｜"
+                    f"{index}. *{entry['code']} {entry['name']}*｜"
                     f"`{entry['ratio']:.1f}%`（{entry['change']:+.2f}pt）"
                 )
 
@@ -328,7 +357,7 @@ def format_big_holder_market_rankings(
                 continue
             for index, entry in enumerate(entries, 1):
                 lines.append(
-                    f"{index}. 🔷 **{entry['code']} {entry['name']}**｜"
+                    f"{index}. *{entry['code']} {entry['name']}*｜"
                     f"`{entry['ratio']:.1f}%`（{entry['change']:+.2f}pt）"
                 )
 
@@ -492,7 +521,7 @@ def format_consecutive_buyers_message(
     else:
         for idx, item in enumerate(dual_consecutive, 1):
             lines.append(
-                f"{idx}. 🔷 **{item['code']} {item['name']}**\n"
+                f"{idx}. *{item['code']} {item['name']}*\n"
                 f"   • 外資連 `{item['foreign_days']}` 天（累計 `+{item['foreign_accum']:,}` 張）\n"
                 f"   • 投信連 `{item['trust_days']}` 天（累計 `+{item['trust_accum']:,}` 張）\n"
                 f"   • 雙法人合計累計 `+{item['total_accum']:,}` 張"
@@ -507,7 +536,7 @@ def format_consecutive_buyers_message(
     else:
         for idx, item in enumerate(foreign_consecutive, 1):
             lines.append(
-                f"{idx}. 🔷 **{item['code']} {item['name']}**｜"
+                f"{idx}. *{item['code']} {item['name']}*｜"
                 f"連 `{item['days']}` 天｜累計 `+{item['accum_lots']:,}` 張（今日 `+{item['today_lots']:,}`）"
             )
 
@@ -520,7 +549,7 @@ def format_consecutive_buyers_message(
     else:
         for idx, item in enumerate(it_consecutive, 1):
             lines.append(
-                f"{idx}. 🔷 **{item['code']} {item['name']}**｜"
+                f"{idx}. *{item['code']} {item['name']}*｜"
                 f"連 `{item['days']}` 天｜累計 `+{item['accum_lots']:,}` 張（今日 `+{item['today_lots']:,}`）"
             )
 

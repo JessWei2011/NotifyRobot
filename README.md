@@ -112,9 +112,13 @@ NotifyRobot 現已支援 Discord 即時雙向互動！只要機器人常駐執�
 - **`/stock <代號>`**：查詢個股即時價量行情、開高低收、成交量、內外盤大單力道，以及最近交易日三大法人（外資、投信、自營商）買賣超籌碼。
 - **`/news <代號>`**：上網即時爬取個股最新新聞，並由 AI 自動總結核心動態、題材、正面動能（利多）與風險觀察（利空）。
 - **`/alert <代號>`（或 `/alart`）**：查詢個股是否進入注意股票、警告或處置股票。**若主管機關已公告確認處置日期（不論是否已經開始處置），皆會完整印出處置起訖日期、原因與措施。**
+- **`/chip <代號>`**：整理籌碼資訊，並給出專業短期趨勢評價。
+- **`/resonance`**：查詢長短線籌碼共振 Top 10（千張大戶逐週增加 ＋ 5D主力買超）。
+- **`/yt <url>`**：輸入 YouTube 網址，由 AI 自動去蕪存菁產出總經大盤、個股與操作策略之精華卡片筆記（加 `-q` 可指定本機 Qwen）。
 
 ### 啟動方式
-- **Mac 雙擊**：`run_discord_bot.command`
+- **Mac 雙擊背景啟動（不佔 Dock）**：`run_discord_bot_background.command`（停止請雙擊 `stop_discord_bot.command`）
+- **Mac 雙擊視窗啟動**：`run_discord_bot.command`
 - **Windows 雙擊**：`run_discord_bot.bat`
 - **終端機執行**：
   ```bash
@@ -123,7 +127,7 @@ NotifyRobot 現已支援 Discord 即時雙向互動！只要機器人常駐執�
   python3 main.py --discord-bot
   ```
 
-> 💡 **AI 新聞分析設定**：在 `.env` 中設定 `GEMINI_API_KEY=你的金鑰`（可免費於 Google AI Studio 申請），即可啟用 Gemini 智能新聞重點分析！若未設定，機器人將條列最新新聞標題與連結。
+> 💡 **AI 分析設定**：在 `.env` 中設定 `GEMINI_API_KEY=你的金鑰`（可免費於 Google AI Studio 申請），即可啟用 Gemini 智能新聞與 YouTube 影片分析功能。
 
 ---
 
@@ -131,8 +135,10 @@ NotifyRobot 現已支援 Discord 即時雙向互動！只要機器人常駐執�
 
 - `main.py`：主程式入口，支援 `--dry-run`、`--date YYYYMMDD` 與 `--discord-bot`。
 - `run_bot.py`：Discord 互動機器人啟動腳本。
-- `run_discord_bot.command` / `.bat`：一鍵啟動 Discord 互動機器人。
+- `run_discord_bot_background.command`：Mac 一鍵完全背景啟動（無終端機視窗，不佔 Dock）。
+- `stop_discord_bot.command`：Mac 一鍵停止背景機器人。
 - `src/bot_service.py`：Discord Slash Commands 與事件監聽處理器。
+- `src/youtube_summarizer.py`：YouTube 雙軌字幕抓取與 Gemini 深度投資重點整理模組。
 - `src/stock_query.py`：即時價量、籌碼查詢、處置注意警示與 AI 新聞分析模組。
 - `test_telegram.py`：Telegram Bot 連線驗證小幫手。
 - `setup_cron.sh`：Mac 定時排程設定腳本。
