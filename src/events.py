@@ -247,10 +247,62 @@ def collect_corporate_action_events(watchlist_codes: Set[str]) -> List[Dict[str,
     return events
 
 
+def _fetch_earnings_calls(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
+    """爬取 Yahoo 股市法人說明會行事曆中屬於自選股的法說會日程。"""
+    url = "https://tw.stock.yahoo.com/calendar/earnings-call"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    calls: List[Dict[str, str]] = []
+    try:
+        from bs4 import BeautifulSoup
+        resp = requests.get(url, headers=headers, timeout=20)
+        if resp.status_code != 200:
+            logger.warning("法說會行事曆抓取失敗 (HTTP %s)", resp.status_code)
+            return []
+        soup = BeautifulSoup(resp.text, "html.parser")
+        links = soup.find_all("a", href=lambda h: h and "/quote/" in h)
+        for a in links:
+            m = re.search(r"/quote/([0-9]{4,6})", a.get("href", ""))
+            if not m:
+                continue
+            code = m.group(1)
+            if code not in watchlist_codes:
+                continue
+            row = a.find_parent("li") or a.find_parent("div", class_=lambda c: c and any(k in str(c).lower() for k in ("table", "row", "item")))
+            if not row:
+                continue
+            text = row.get_text(" | ", strip=True)
+            parts = [p.strip() for p in text.split("|") if p.strip()]
+            dt_str = next((p for p in parts if re.search(r"\d{4}/\d{2}/\d{2}", p)), "")
+            if not dt_str:
+                continue
+            # dt_str format: "YYYY/MM/DD HH:MM" or "YYYY/MM/DD"
+            date_part = dt_str.split()[0].replace("/", "-")
+            time_part = dt_str.split()[1] if len(dt_str.split()) > 1 else ""
+            name = a.get_text(strip=True) or (parts[0] if parts else code)
+            desc = parts[-1] if len(parts) >= 4 else "法人說明會"
+            calls.append({
+                "code": code,
+                "name": name,
+                "date": date_part,
+                "time": time_part,
+                "desc": desc,
+            })
+    except Exception as exc:
+        logger.warning("爬取法人說明會行事曆時發生例外：%s", exc)
+    return calls
+
+
 def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.date, days: int = 7) -> List[str]:
-    """取得未來指定天數內、已公告的自選股除權息行事。"""
+    """取得未來指定天數內、已公告的自選股除權息與法說會行事。"""
     end_date = start_date + datetime.timedelta(days=days)
     items: List[str] = []
+
+    # 1. 除權、除息／配息行事
     for action in _corporate_actions(watchlist_codes):
         try:
             event_date = datetime.date.fromisoformat(action["date"])
@@ -262,7 +314,20 @@ def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.dat
                 f"（{action['market']}）{action['label']}：{_corporate_action_detail(action)}"
             )
 
-    # 每月 10 號為上月營收申報法定截止日（檢查當月及次月 10 號是否落在提醒區間）
+    # 2. 法人說明會 (法說會) 行事
+    for call in _fetch_earnings_calls(watchlist_codes):
+        try:
+            event_date = datetime.date.fromisoformat(call["date"])
+        except ValueError:
+            continue
+        if start_date <= event_date <= end_date:
+            time_info = f" {call['time']}" if call["time"] else ""
+            is_today = "【今日】" if event_date == start_date else ""
+            items.append(
+                f"🎤 `{call['date']}{time_info}`｜*{call['code']} {call['name']}* {is_today}法人說明會：{call['desc']}"
+            )
+
+    # 3. 每月 10 號為上月營收申報法定截止日（檢查當月及次月 10 號是否落在提醒區間）
     this_month_deadline = start_date.replace(day=10)
     next_month = start_date.replace(day=28) + datetime.timedelta(days=4)
     next_month_deadline = next_month.replace(day=10)
@@ -280,6 +345,7 @@ def format_morning_calendar(start_date: datetime.date, items: List[str]) -> str:
         "──────────────────────",
         *calendar_items,
         "──────────────────────",
-        "💡 僅列已公告的自選股除權、除息／配息與申報期限；日期以公司正式公告為準。",
+        "💡 包含自選股法說會日程、除權息與營收申報期限；日期與時間以公司公告為準。",
     ]
     return "\n".join(lines)
+
