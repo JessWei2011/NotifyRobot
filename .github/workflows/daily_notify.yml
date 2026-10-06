@@ -1,0 +1,37 @@
+name: 台股籌碼定時推播
+
+on:
+  schedule:
+    # GitHub Actions 使用 UTC 時間（台灣時間 UTC+8，需減 8 小時）
+    # 週一至週五 UTC 07:35 = 台灣時間 15:35（盤後初步籌碼與自選股資訊）
+    - cron: '35 7 * * 1-5'
+    # 週一至週五 UTC 09:05 = 台灣時間 17:05（三大法人完整買賣超與融資券籌碼）
+    - cron: '5 9 * * 1-5'
+  workflow_dispatch: # 支援在 GitHub 網頁手動點擊按鈕觸發執行
+
+jobs:
+  run-robot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 檢出專案代碼 (Checkout)
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安裝相依套件
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 建立 .env 檔案
+        run: |
+          echo "${{ secrets.ENV }}" > .env
+
+      - name: 執行推播主程式
+        run: |
+          python main.py
