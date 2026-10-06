@@ -95,7 +95,9 @@ def collect_watchlist_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
                 when = announcement_date + " " + _value(item, "發言時間", "Time")
                 if any(word in subject for word in ("法人說明會", "法說會", "業績發表會")):
                     title = "法說會公告"
-                elif "自結" in subject:
+                elif any(word in subject for word in ("財務報告", "第1季", "第2季", "第3季", "第4季", "通報", "提報董事會", "決議通過")):
+                    title = "財報／財務報告公告"
+                elif any(word in subject for word in ("自結", "損益")):
                     title = "自結損益公告"
                 else:
                     title = "自選股重大訊息"
@@ -334,6 +336,20 @@ def collect_morning_calendar(watchlist_codes: Set[str], start_date: datetime.dat
     for deadline in (this_month_deadline, next_month_deadline):
         if start_date <= deadline <= end_date:
             items.append(f"📅 `{deadline.isoformat()}`｜上月營收申報截止提醒（實際以公開資訊觀測站公告為準）")
+
+    # 4. 法定季報與年報申報截止日提醒（Q1: 5/15, Q2: 8/14, Q3: 11/14, 年報/Q4: 3/31）
+    current_year = start_date.year
+    report_deadlines = [
+        (datetime.date(current_year, 3, 31), f"{current_year - 1} 年度財報申報截止"),
+        (datetime.date(current_year, 5, 15), f"{current_year} 年 Q1 第一季財報申報截止"),
+        (datetime.date(current_year, 8, 14), f"{current_year} 年 Q2 第二季財報申報截止"),
+        (datetime.date(current_year, 11, 14), f"{current_year} 年 Q3 第三季財報申報截止"),
+        (datetime.date(current_year + 1, 3, 31), f"{current_year} 年度財報申報截止"),
+    ]
+    for dl_date, desc in report_deadlines:
+        if start_date <= dl_date <= end_date:
+            items.append(f"📊 `{dl_date.isoformat()}`｜【重大財報期限】{desc}")
+
     return sorted(items)
 
 
@@ -345,7 +361,7 @@ def format_morning_calendar(start_date: datetime.date, items: List[str]) -> str:
         "──────────────────────",
         *calendar_items,
         "──────────────────────",
-        "💡 包含自選股法說會日程、除權息與營收申報期限；日期與時間以公司公告為準。",
+        "💡 包含自選股法說會日程、除權息、營收申報與季報財報法定截止期限。",
     ]
     return "\n".join(lines)
 
