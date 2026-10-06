@@ -238,24 +238,12 @@ def format_watchlist_messages(
 
     blocks = [_format_watchlist_item(item) for item in watchlist_data]
 
-    # 動態分組，確保每組加上標頭後皆不超過 max_chunk_chars
-    chunks: List[List[str]] = []
-    current_chunk: List[str] = []
-    base_header_len = len(f"📊 *【自選股盤後籌碼動態】 (9/9)*\n📅 日期：`{date_str}`\n──────────────────────\n")
-    current_len = base_header_len
+    # 嚴格每 10 檔個股拆分為一篇，同時確保單篇不超過字數上限
+    chunk_size = 10
+    chunks: List[List[str]] = [
+        blocks[i : i + chunk_size] for i in range(0, len(blocks), chunk_size)
+    ]
 
-    for block in blocks:
-        block_len = len(block) + 2  # 加換行分隔
-        if current_chunk and (current_len + block_len > max_chunk_chars):
-            chunks.append(current_chunk)
-            current_chunk = [block]
-            current_len = base_header_len + block_len
-        else:
-            current_chunk.append(block)
-            current_len += block_len
-
-    if current_chunk:
-        chunks.append(current_chunk)
 
     total_chunks = len(chunks)
     messages = []
