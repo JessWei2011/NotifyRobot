@@ -7,4 +7,3 @@ beautifulsoup4>=4.11.0
 yt-dlp
 youtube-transcript-api
 google-genai
-faster-whisper
