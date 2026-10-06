@@ -130,8 +130,18 @@ def collect_watchlist_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
 
 
 def collect_monthly_revenue_events(watchlist_codes: Set[str]) -> List[Dict[str, str]]:
-    """讀取官方最新月營收，並為自選股建立一次性公告提醒。"""
+    """讀取官方最新月營收，僅針對自選股「當日（或最近發布日）最新出表」之營收發送一次性公告提醒。"""
     events: List[Dict[str, str]] = []
+    today_dt = datetime.date.today()
+    # 台灣官方「出表日期」為民國年月日格式，如 1151006
+    roc_year = today_dt.year - 1911
+    today_roc = f"{roc_year}{today_dt.month:02d}{today_dt.day:02d}"
+    
+    # 計算期望之最新月營收月份（上個月），如 10 月發布 9 月營收 (11509)
+    first_of_month = today_dt.replace(day=1)
+    last_month_dt = first_of_month - datetime.timedelta(days=1)
+    expected_month_roc = f"{last_month_dt.year - 1911}{last_month_dt.month:02d}"
+
     sources = [
         ("上市", False, f"{TWSE}/opendata/t187ap05_L"),
         ("上櫃", True, f"{TPEX}/t187ap05_R"),
@@ -141,9 +151,19 @@ def collect_monthly_revenue_events(watchlist_codes: Set[str]) -> List[Dict[str, 
             code = _value(item, "公司代號", "Code", "SecuritiesCompanyCode")
             if code not in watchlist_codes:
                 continue
+            month = _value(item, "資料年月").strip()
+            report_date = _value(item, "出表日期").strip()
+
+            # 核心防呆：
+            # 1. 資料年月必須至少是最近一個月的月營收（避免交易所歷史舊資料如 8 月營收重複推送）
+            if month < expected_month_roc:
+                continue
+
+            # 2. 出表日期必須是當日發布，或是當月新申報（若為舊出表日則不應視為今日新公告）
+            if report_date and report_date != today_roc:
+                continue
+
             name = _value(item, "公司名稱", "Name", "CompanyName")
-            month = _value(item, "資料年月")
-            report_date = _value(item, "出表日期")
             revenue = _value(item, "營業收入-當月營收")
             mom = _value(item, "營業收入-上月比較增減(%)")
             yoy = _value(item, "營業收入-去年同月增減(%)")
