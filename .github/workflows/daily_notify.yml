@@ -7,7 +7,18 @@ on:
     - cron: '35 7 * * 1-5'
     # 週一至週五 UTC 09:05 = 台灣時間 17:05（三大法人完整買賣超與融資券籌碼）
     - cron: '5 9 * * 1-5'
-  workflow_dispatch: # 支援在 GitHub 網頁手動點擊按鈕觸發執行
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '強制重發（略過重複推播檢查）'
+        required: false
+        type: boolean
+        default: true
+      date:
+        description: '指定測試交易日 (YYYYMMDD，留空則自動抓最新交易日)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   run-robot:
@@ -29,9 +40,21 @@ jobs:
           pip install -r requirements.txt
 
       - name: 建立 .env 檔案
+        env:
+          ENV_CONTENT: ${{ secrets.ENV }}
         run: |
-          echo "${{ secrets.ENV }}" > .env
+          cat << 'EOF' > .env
+          $ENV_CONTENT
+          EOF
 
       - name: 執行推播主程式
         run: |
-          python main.py
+          CMD="python main.py"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            CMD="$CMD --force"
+          fi
+          if [ -n "${{ inputs.date }}" ]; then
+            CMD="$CMD --date ${{ inputs.date }}"
+          fi
+          echo "執行指令: $CMD"
+          $CMD
