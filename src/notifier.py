@@ -238,8 +238,8 @@ def format_watchlist_messages(
 
     blocks = [_format_watchlist_item(item) for item in watchlist_data]
 
-    # 嚴格每 10 檔個股拆分為一篇，同時確保單篇不超過字數上限
-    chunk_size = 10
+    # 嚴格每 9 檔個股拆分為一篇，確保單篇不超過字數上限（Discord Embed/Text 限制）
+    chunk_size = 9
     chunks: List[List[str]] = [
         blocks[i : i + chunk_size] for i in range(0, len(blocks), chunk_size)
     ]
