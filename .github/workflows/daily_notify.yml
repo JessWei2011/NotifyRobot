@@ -1,14 +1,31 @@
-name: 台股籌碼定時推播
+name: 台股通知機器人自動排程
 
 on:
   schedule:
-    # GitHub Actions 使用 UTC 時間（台灣時間 UTC+8，需減 8 小時）
-    # 週一至週五 UTC 07:35 = 台灣時間 15:35（盤後初步籌碼與自選股資訊）
+    # 提醒：GitHub Actions 使用 UTC 時間（台灣時間 UTC+8，需減 8 小時）
+    # 1. 開盤前行事曆：平日台灣時間 08:30 (UTC 00:30)
+    - cron: '30 0 * * 1-5'
+    # 2. 大盤法人金額初估：平日台灣時間 15:10 (UTC 07:10)
+    - cron: '10 7 * * 1-5'
+    # 3. 盤後籌碼與自選股分析：平日台灣時間 15:35 (UTC 07:35)
     - cron: '35 7 * * 1-5'
-    # 週一至週五 UTC 09:05 = 台灣時間 17:05（三大法人完整買賣超與融資券籌碼）
+    # 4. 籌碼定案完整更新：平日台灣時間 17:05 (UTC 09:05)
     - cron: '5 9 * * 1-5'
+    # 5. 週六集保大戶籌碼週報：每週六台灣時間 09:30 (UTC 01:30)
+    - cron: '30 1 * * 6'
   workflow_dispatch:
     inputs:
+      job_type:
+        description: '選擇要執行的推播任務'
+        required: true
+        type: choice
+        default: 'morning_calendar'
+        options:
+          - 'morning_calendar'     # 🌅 開盤前行事曆
+          - 'check_events'         # 📣 自選股重大訊息與事件檢查
+          - 'daily_chip'           # 📊 盤後籌碼與自選股分析
+          - 'market_summary'       # 💰 上市大盤法人金額速報
+          - 'big_holder_report'    # 🏆 集保大戶籌碼週報
       force:
         description: '強制重發（略過重複推播檢查）'
         required: false
@@ -47,14 +64,57 @@ jobs:
           $ENV_CONTENT
           EOF
 
-      - name: 執行推播主程式
+      - name: 執行推播任務
         run: |
+          # 取得目前 UTC 時間的小時與分鐘（台灣時間 = UTC + 8）
+          UTC_HOUR=$(date -u +%H)
+          UTC_MIN=$(date -u +%M)
+          DOW=$(date -u +%u) # 1=Mon, 6=Sat
+
+          # 判定執行模式（若手動觸發則使用手動選擇的 job_type）
+          JOB_TYPE="${{ inputs.job_type }}"
+          
+          if [ -z "$JOB_TYPE" ]; then
+            # 排程自動觸發時的判斷
+            if [ "$DOW" -eq 6 ]; then
+              JOB_TYPE="big_holder_report"
+            elif [ "$UTC_HOUR" -eq 0 ]; then
+              JOB_TYPE="morning_calendar"
+            elif [ "$UTC_HOUR" -eq 7 ] && [ "$UTC_MIN" -le 25 ]; then
+              JOB_TYPE="market_summary"
+            else
+              JOB_TYPE="daily_chip"
+            fi
+          fi
+
+          echo "🚀 正在執行任務類型: $JOB_TYPE"
+
+          # 組合指令
           CMD="python main.py"
+          case "$JOB_TYPE" in
+            "morning_calendar")
+              CMD="$CMD --morning-calendar"
+              ;;
+            "check_events")
+              CMD="$CMD --check-events"
+              ;;
+            "market_summary")
+              CMD="$CMD --market-summary"
+              ;;
+            "big_holder_report")
+              CMD="$CMD --big-holder-report"
+              ;;
+            "daily_chip")
+              # 預設即為籌碼分析
+              ;;
+          esac
+
           if [ "${{ inputs.force }}" = "true" ]; then
             CMD="$CMD --force"
           fi
           if [ -n "${{ inputs.date }}" ]; then
             CMD="$CMD --date ${{ inputs.date }}"
           fi
+
           echo "執行指令: $CMD"
           $CMD
