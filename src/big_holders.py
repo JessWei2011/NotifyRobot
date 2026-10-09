@@ -66,9 +66,27 @@ def _parse_big_holder_snapshot(text: str, codes: set[str] | None = None) -> tupl
     return report_date, result
 
 
+def fetch_latest_tdcc_date() -> str:
+    """快速取得集保最新釋出資料的日期 (YYYYMMDD)，僅讀取首行資料秒級返回。"""
+    response = requests.get(TDCC_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, verify=False, stream=True)
+    response.raise_for_status()
+    try:
+        iterator = response.iter_lines()
+        _header = next(iterator, None)
+        first_row = next(iterator, None)
+        if first_row:
+            line_str = first_row.decode("utf-8-sig", errors="ignore")
+            parts = line_str.split(",")
+            if parts and parts[0].strip().isdigit():
+                return parts[0].strip()
+    finally:
+        response.close()
+    return ""
+
+
 def fetch_big_holder_snapshot(codes: set[str] | None = None) -> tuple[str, dict[str, dict[str, Any]]]:
     """取得集保最新週資料；``codes=None`` 時保留全市場資料。"""
-    response = requests.get(TDCC_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=45, verify=False)
+    response = requests.get(TDCC_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=60, verify=False)
     response.raise_for_status()
     return _parse_big_holder_snapshot(response.text, codes)
 

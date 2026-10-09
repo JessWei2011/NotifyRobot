@@ -9,6 +9,91 @@ import discord
 
 logger = logging.getLogger(__name__)
 
+def is_apple_podcast_url(url: str) -> bool:
+    """判斷是否為 Apple Podcast 網址"""
+    return "podcasts.apple.com" in url.lower()
+
+def extract_apple_podcast_info(podcast_url: str) -> Dict[str, Any]:
+    """從 Apple Podcast 單集頁面中解析單集名稱、節目名稱、時長、縮圖與音訊下載網址"""
+    import urllib.request
+    import urllib.parse
+    import json
+
+    parts = urllib.parse.urlsplit(podcast_url)
+    encoded_url = urllib.parse.urlunsplit((
+        parts.scheme,
+        parts.netloc,
+        urllib.parse.quote(parts.path),
+        parts.query,
+        parts.fragment
+    ))
+    
+    req = urllib.request.Request(
+        encoded_url,
+        headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+    )
+    with urllib.request.urlopen(req) as resp:
+        html = resp.read().decode('utf-8', errors='ignore')
+
+    og_title_m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
+    og_img_m = re.search(r'<meta property="og:image" content="([^"]+)"', html)
+    og_desc_m = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+
+    title = og_title_m.group(1) if og_title_m else '未知 Podcast 單集'
+    thumbnail = og_img_m.group(1) if og_img_m else ''
+    uploader = 'Apple Podcast'
+    audio_url = ''
+    duration = 0
+
+    if og_desc_m:
+        desc_text = og_desc_m.group(1)
+        dur_m = re.search(r'(\d+)\s*(?:分鐘|mins?|minutes)', desc_text)
+        if dur_m:
+            duration = int(dur_m.group(1)) * 60
+
+    server_data_m = re.search(r'<script[^>]*id="serialized-server-data"[^>]*>(.*?)</script>', html, re.DOTALL)
+    if server_data_m:
+        try:
+            data = json.loads(server_data_m.group(1))
+            def search_data(obj):
+                nonlocal uploader, audio_url, duration
+                if isinstance(obj, dict):
+                    if 'currentMediaEnclosure' in obj and isinstance(obj['currentMediaEnclosure'], dict):
+                        stream = obj['currentMediaEnclosure'].get('streamUrl')
+                        if stream:
+                            audio_url = stream
+                    elif 'streamUrl' in obj and obj['streamUrl'] and not audio_url:
+                        audio_url = obj['streamUrl']
+                    if 'episodeOffer' in obj and isinstance(obj['episodeOffer'], dict):
+                        show = obj['episodeOffer'].get('showOffer', {})
+                        if show.get('title'):
+                            uploader = show['title']
+                    if 'durationMs' in obj and not duration:
+                        duration = int(obj['durationMs']) // 1000
+                    for v in obj.values():
+                        search_data(v)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        search_data(item)
+            search_data(data)
+        except Exception:
+            pass
+
+    if not audio_url:
+        mp3s = re.findall(r'https?://[^"\'\s]+\.(?:mp3|m4a)[^"\'\s]*', html)
+        if mp3s:
+            audio_url = mp3s[0]
+
+    return {
+        'title': title,
+        'uploader': uploader,
+        'duration': duration,
+        'thumbnail': thumbnail,
+        'webpage_url': podcast_url,
+        'audio_url': audio_url,
+        'media_type': 'podcast'
+    }
+
 def extract_video_id(url: str) -> str:
     """從常見 YouTube 網址格式中解析出 11 碼的 Video ID (包含 watch?v=, youtu.be, shorts, live)"""
     patterns = [
@@ -21,13 +106,27 @@ def extract_video_id(url: str) -> str:
             return match.group(1)
     return ""
 
+def _get_common_ydl_opts() -> Dict[str, Any]:
+    """取得相容且防 403 封鎖的 yt-dlp 通用選項"""
+    opts: Dict[str, Any] = {
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web']
+            }
+        },
+        'quiet': True,
+        'no_warnings': True,
+    }
+    if os.path.exists('/opt/homebrew/bin/node'):
+        opts['js_runtimes'] = {'node': {'path': '/opt/homebrew/bin/node'}}
+    elif os.path.exists('/usr/local/bin/node'):
+        opts['js_runtimes'] = {'node': {'path': '/usr/local/bin/node'}}
+    return opts
+
 def get_video_info(youtube_url: str) -> Dict[str, Any]:
     """獲取影片基本資訊（標題、作者、長度、縮圖）"""
-    ydl_opts = {
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True
-    }
+    ydl_opts = _get_common_ydl_opts()
+    ydl_opts['skip_download'] = True
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(youtube_url, download=False)
         return {
@@ -73,9 +172,9 @@ def get_transcript_from_youtube(video_id: str) -> Tuple[str, str]:
         logger.warning(f"擷取 YouTube 字幕失敗或無字幕: {e}")
         return "", ""
 
-def download_audio_and_transcribe_whisper(youtube_url: str, model_size: str = "base") -> Tuple[str, str]:
+def download_audio_and_transcribe_whisper(url_or_audio: str, is_direct_audio: bool = False, model_size: str = "base") -> Tuple[str, str]:
     """
-    雙軌第二軌：無字幕時啟用 Whisper 語音辨識
+    雙軌第二軌 / Podcast：啟用 Whisper 語音辨識（支援 YouTube 與直接音訊連結）
     """
     from faster_whisper import WhisperModel
 
@@ -83,19 +182,28 @@ def download_audio_and_transcribe_whisper(youtube_url: str, model_size: str = "b
     if os.path.exists(output_audio):
         os.remove(output_audio)
 
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': output_audio.rsplit('.', 1)[0],
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': True,
-        'no_warnings': True
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([youtube_url])
+    if is_direct_audio:
+        import urllib.request
+        req = urllib.request.Request(
+            url_or_audio,
+            headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+        )
+        with urllib.request.urlopen(req) as resp, open(output_audio, 'wb') as f:
+            while chunk := resp.read(1024 * 512):
+                f.write(chunk)
+    else:
+        ydl_opts = _get_common_ydl_opts()
+        ydl_opts.update({
+            'format': 'bestaudio/best',
+            'outtmpl': output_audio.rsplit('.', 1)[0],
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        })
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url_or_audio])
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     segments, info = model.transcribe(output_audio, language="zh", beam_size=3)
@@ -144,7 +252,8 @@ def generate_summary_with_ollama(prompt: str, transcript: str) -> str:
 def generate_youtube_summary_smart(
     transcript: str,
     video_title: str,
-    force_qwen: bool = False
+    force_qwen: bool = False,
+    content_type: str = "影音"
 ) -> Tuple[str, str]:
     """
     智慧摘要入口：
@@ -156,7 +265,7 @@ def generate_youtube_summary_smart(
     回傳 (摘要內容, 實際使用的模型名稱說明)
     """
     prompt = f"""你是一位資深的證券投資研究員與內容萃取專家。
-請針對 YouTube 影片《{video_title}》的逐字稿，進行「去蕪存菁」的深入繁體中文專業筆記整理。
+請針對 {content_type}《{video_title}》的逐字稿，進行「去蕪存菁」的深入繁體中文專業筆記整理。
 
 【過濾原則】：
 1. 嚴格徹底濾除所有主持贅詞、口頭禪、哈囉打招呼、廢話、社群按讚訂閱、會員方案宣傳與工商廣告。
@@ -165,22 +274,22 @@ def generate_youtube_summary_smart(
 【請嚴格依據以下結構整理輸出】：
 
 ### 🔑 【特別提醒：週報通關密語】（若無提及則此區塊直接寫「無」）
-- 若講者在影片中提及領取「週報」、「資料」、「研究報告」、「黑馬股名單」的**通關密語 / 通關密碼 / 暗號 / 代碼**（通常為一串數字如 888、168、年份，或英文如 WIN、VIP，或特定短詞）：
+- 若講者在內容中提及領取「週報」、「資料」、「研究報告」、「黑馬股名單」的**通關密語 / 通關密碼 / 暗號 / 代碼**（通常為一串數字如 888、168、年份，或英文如 WIN、VIP，或特定短詞）：
   👉 **請在此處醒目標註：「📢 本集週報通關密語：【密語內容】（用途說明/領取方式）」**
 
 ### 🌐 一、總經與大盤盤勢觀點
 - **大盤/國際情勢**：（講者對目前台股大盤、美股、聯準會、匯率或總經局勢的判斷，包含關鍵支撐壓力、點位、多空方向或轉折訊號）
 - **關鍵市場邏輯**：（講者提出支撐其大盤論點的核心原因）
 
-### 📈 二、影片提及個股與族群深度剖析（務必完整列出）
-（請逐一列出影片中講者提及的「每一檔個股／產業族群」，若無特定個股則寫該產業。每檔個股請包含：代號名稱、多空方向、講者的核心論點、營運/題材利多或風險、技術/籌碼看法）
+### 📈 二、節目提及個股與族群深度剖析（務必完整列出）
+（請逐一列出內容中講者提及的「每一檔個股／產業族群」，若無特定個股則寫該產業。每檔個股請包含：代號名稱、多空方向、講者的核心論點、營運/題材利多或風險、技術/籌碼看法）
 • **【股票名稱/代號】**：
   - **核心題材/基本面**：...
   - **技術/籌碼/點位觀點**：...
   - **講者策略建議**：（例如：拉回找買點、高檔獲利了結、波段續抱等）
 
 ### 🎯 三、核心結論與操作策略指引
-- **講者最終結論**：（濃縮整部影片最核心的投資結論）
+- **講者最終結論**：（濃縮整部內容最核心的投資結論）
 - **操作重點建議**：（資金水位建議、持股節奏、後續觀察指標）
 
 ---
@@ -210,7 +319,11 @@ def generate_youtube_summary_smart(
     candidate_gemini_models = list(dict.fromkeys(candidate_gemini_models))
 
     last_gemini_err = None
-    client = genai.Client(api_key=gemini_key)
+    from google.genai import types
+    client = genai.Client(
+        api_key=gemini_key,
+        http_options=types.HttpOptions(timeout=90.0)
+    )
 
     for g_model in candidate_gemini_models:
         try:
@@ -257,18 +370,23 @@ def build_youtube_summary_embeds(
     chunks = [raw_summary[i:i + max_len] for i in range(0, len(raw_summary), max_len)]
     embeds = []
 
+    is_podcast = video_info.get("media_type") == "podcast"
+    icon = "🎙️" if is_podcast else "🎬"
+    color = discord.Color.from_rgb(142, 68, 173) if is_podcast else discord.Color.from_rgb(255, 0, 0)
+    source_label = "節目" if is_podcast else "頻道"
+
     for idx, chunk in enumerate(chunks):
-        card_title = f"🎬 {title[:200]}" if idx == 0 else f"🎬 {title[:190]} (續 {idx + 1})"
+        card_title = f"{icon} {title[:200]}" if idx == 0 else f"{icon} {title[:190]} (續 {idx + 1})"
         embed = discord.Embed(
             title=card_title,
             url=url,
-            color=discord.Color.from_rgb(255, 0, 0),
+            color=color,
             description=chunk
         )
         if idx == 0 and thumbnail:
             embed.set_thumbnail(url=thumbnail)
         if idx == len(chunks) - 1:
-            footer_parts = [f"頻道: {uploader}", f"時長: {duration_str}", f"字幕: {source_desc}"]
+            footer_parts = [f"{source_label}: {uploader}", f"時長: {duration_str}", f"來源: {source_desc}"]
             if model_desc:
                 footer_parts.append(f"AI: {model_desc}")
             embed.set_footer(text=" ｜ ".join(footer_parts))

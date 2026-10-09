@@ -11,7 +11,10 @@ MARKET_CRON_JOB="*/10 15-18 * * 1-5 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/m
 STOCK_CRON_JOB="30 20 * * 1-5 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py >> $LOG_FILE 2>&1"
 EVENT_CRON_JOB="*/10 8-23 * * * cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --check-events >> $LOG_FILE 2>&1"
 CALENDAR_CRON_JOB="30 8 * * 1-5 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --morning-calendar >> $LOG_FILE 2>&1"
-BIG_HOLDER_CRON_JOB="30 9 * * 6 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --big-holder-report >> $LOG_FILE 2>&1"
+# 智慧集保輪詢：週四至週六晚上 18:30~22:30 每 20 分鐘檢查一次，一旦集保資料釋出即推播且自動防重
+BIG_HOLDER_CRON_JOB="*/20 18-22 * * 4-6 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --poll-big-holder >> $LOG_FILE 2>&1"
+# 週六早晨備援發送（若前兩天集保延遲至週六凌晨釋出，最晚週六 09:30 補發）
+BIG_HOLDER_BACKUP_CRON="30 9 * * 6 cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_DIR/main.py --poll-big-holder >> $LOG_FILE 2>&1"
 PROJECT_MARKER="$SCRIPT_DIR/main.py"
 
 echo "=================================================="
@@ -22,7 +25,7 @@ echo "Python 路徑: $PYTHON_EXEC"
 echo "排程時間: 平日 15:00–18:50 確認當日法人資料、20:30 個股報告"
 echo "自選股事件警示: 每日 08:00~23:59 每 10 分鐘"
 echo "開盤前行事曆: 平日 08:30"
-echo "大戶籌碼週報: 每週六 09:30"
+echo "智慧大戶週報: 週四~週六 18:00-22:40 每 20 分鐘輪詢（遇連假自動提早釋出即推播）"
 echo "日誌輸出: $LOG_FILE"
 echo "=================================================="
 
@@ -44,7 +47,7 @@ if [ $? -eq 0 ]; then
 fi
 
 # 新增排程
-(crontab -l 2>/dev/null; echo "$MARKET_CRON_JOB"; echo "$STOCK_CRON_JOB"; echo "$EVENT_CRON_JOB"; echo "$CALENDAR_CRON_JOB"; echo "$BIG_HOLDER_CRON_JOB") | crontab -
+(crontab -l 2>/dev/null; echo "$MARKET_CRON_JOB"; echo "$STOCK_CRON_JOB"; echo "$EVENT_CRON_JOB"; echo "$CALENDAR_CRON_JOB"; echo "$BIG_HOLDER_CRON_JOB"; echo "$BIG_HOLDER_BACKUP_CRON") | crontab -
 
 echo "🎉 排程設定完成！已新增以下定時任務至你的 Mac："
 crontab -l | grep -F "$PROJECT_MARKER"

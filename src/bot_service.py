@@ -335,18 +335,48 @@ async def slash_resonance(interaction: discord.Interaction):
             await interaction.followup.send(chunk)
 
 
-@tree.command(name="yt", description="輸入 YouTube 網址，由 AI 產出精華重點卡片 (加 -q 指定本機 Qwen，預設 Gemini)")
-@app_commands.describe(
-    url="YouTube 影片網址 (例如: https://www.youtube.com/watch?v=... 或 https://youtu.be/...)",
-    options="可選參數：輸入 -q 使用本機 Ollama Qwen，預設留空為 Gemini (支援自動容錯備援)"
-)
-async def cmd_yt(interaction: discord.Interaction, url: str, options: Optional[str] = None):
+async def _handle_media_summary(interaction: discord.Interaction, url: str, force_qwen: bool = False):
+    cmd_name = "ytq" if force_qwen else "yt"
+    user_name = interaction.user.name if interaction.user else "未知使用者"
+    logger.info(f"收到 /{cmd_name} 請求 - 來自: {user_name}, 網址: {url}")
     await interaction.response.defer(thinking=True)
 
-    # 判斷是否指定 -q
-    force_qwen = False
-    if options and "-q" in options.lower():
-        force_qwen = True
+    loop = asyncio.get_running_loop()
+    status_msg = {"text": "🔍 正在解析網址與讀取節目資訊..."}
+
+    # 進度同步函式：同步執行緒通知主協程即時更新
+    def update_status(text: str):
+        status_msg["text"] = text
+        logger.info(f"[進度更新] {text}")
+        # 即時發送 followup 提示使用者
+        asyncio.run_coroutine_threadsafe(
+            _safe_send_progress(interaction, f"⏳ {text}"),
+            loop
+        )
+
+    async def _safe_send_progress(inter: discord.Interaction, text: str):
+        try:
+            await inter.followup.send(text)
+        except Exception as e:
+            logger.debug(f"發送進度提示失敗: {e}")
+
+    # 心跳計時器：每 60 秒主動回報一次當前進度與經過時間，讓使用者安心
+    start_time = asyncio.get_event_loop().time()
+    done_event = asyncio.Event()
+
+    async def progress_reporter():
+        while not done_event.is_set():
+            try:
+                await asyncio.wait_for(done_event.wait(), timeout=60.0)
+                break
+            except asyncio.TimeoutError:
+                elapsed_min = int((asyncio.get_event_loop().time() - start_time) // 60)
+                elapsed_sec = int((asyncio.get_event_loop().time() - start_time) % 60)
+                time_str = f"{elapsed_min} 分 {elapsed_sec} 秒" if elapsed_min else f"{elapsed_sec} 秒"
+                progress_text = f"⏳ **[處理進行中・已耗時 {time_str}]**\n> 當前狀態：{status_msg['text']}\n> 請稍候，系統持續高速運算中..."
+                await _safe_send_progress(interaction, progress_text)
+
+    reporter_task = asyncio.create_task(progress_reporter())
 
     def _process_video():
         from src.youtube_summarizer import (
@@ -356,36 +386,65 @@ async def cmd_yt(interaction: discord.Interaction, url: str, options: Optional[s
             download_audio_and_transcribe_whisper,
             generate_youtube_summary_smart,
             build_youtube_summary_embeds,
+            is_apple_podcast_url,
+            extract_apple_podcast_info,
         )
 
-        vid = extract_video_id(url.strip())
-        if not vid:
-            return None, "❌ 無法辨識此 YouTube 網址，請確認網址格式是否正確。"
+        url_str = url.strip()
+        is_podcast = is_apple_podcast_url(url_str)
+        vid = extract_video_id(url_str) if not is_podcast else ""
+
+        if not is_podcast and not vid:
+            return None, "❌ 無法辨識此網址，請確認是正確的 YouTube 影片或 Apple Podcast 單集連結。"
 
         try:
-            info = get_video_info(url.strip())
+            if is_podcast:
+                update_status("正在解析 Apple Podcast 頁面與取得音訊串流...")
+                info = extract_apple_podcast_info(url_str)
+                if not info.get("audio_url"):
+                    return None, "❌ 無法獲取該 Apple Podcast 單集的音訊串流連結。"
+                dur_m = info.get('duration', 0) // 60
+                update_status(f"音訊串流已就緒（單集長度約 {dur_m} 分鐘），啟動本機 Whisper 高速語音轉錄中...")
+                transcript, source_desc = download_audio_and_transcribe_whisper(
+                    url_or_audio=info["audio_url"],
+                    is_direct_audio=True,
+                    model_size="base"
+                )
+                content_type = "Podcast 單集"
+            else:
+                update_status("正在讀取 YouTube 影片資訊...")
+                info = get_video_info(url_str)
+                info["media_type"] = "youtube"
+                # 雙軌第一軌：抓字幕
+                update_status("嘗試獲取 YouTube 官方/自動字幕...")
+                transcript, source_desc = get_transcript_from_youtube(vid)
+
+                # 雙軌第二軌：Whisper 備援
+                if not transcript:
+                    update_status("YouTube 查無字幕，切換至本機 Whisper 語音轉錄中...")
+                    transcript, source_desc = download_audio_and_transcribe_whisper(
+                        url_or_audio=url_str,
+                        is_direct_audio=False,
+                        model_size="base"
+                    )
+                content_type = "YouTube 影片"
         except Exception as e:
-            return None, f"❌ 讀取影片資訊失敗：{e}"
-
-        # 雙軌第一軌：抓字幕
-        transcript, source_desc = get_transcript_from_youtube(vid)
-
-        # 雙軌第二軌：Whisper 備援
-        if not transcript:
-            try:
-                transcript, source_desc = download_audio_and_transcribe_whisper(url.strip(), model_size="base")
-            except Exception as e:
-                return None, f"❌ 語音辨識轉錄失敗：{e}"
+            logger.exception(f"讀取媒體或轉錄失敗: {e}")
+            return None, f"❌ 讀取媒體或轉錄失敗：{e}"
 
         if not transcript:
-            return None, "❌ 無法取得該影片的字幕或語音內容。"
+            return None, "❌ 無法取得該內容的字幕或語音內容。"
 
-        # 呼叫智慧摘要 (支援 -q 與自動 Fallback)
+        model_label = "本機 Ollama Qwen" if force_qwen else "Google Gemini"
+        update_status(f"逐字稿提取完成 (共 {len(transcript)} 字)！正在呼叫 {model_label} 梳理專業投資研究筆記...")
+
+        # 呼叫智慧摘要
         try:
             summary, model_desc = generate_youtube_summary_smart(
                 transcript=transcript,
                 video_title=info.get("title", ""),
-                force_qwen=force_qwen
+                force_qwen=force_qwen,
+                content_type=content_type
             )
             embeds = build_youtube_summary_embeds(
                 video_info=info,
@@ -393,19 +452,62 @@ async def cmd_yt(interaction: discord.Interaction, url: str, options: Optional[s
                 source_desc=source_desc,
                 model_desc=model_desc
             )
+            update_status("重點筆記生成完畢，正在傳送卡片！")
             return embeds, None
         except Exception as e:
+            logger.exception(f"AI 產出重點筆記失敗: {e}")
             return None, f"❌ AI 產出重點筆記失敗：{e}"
 
-    embeds, error_msg = await asyncio.to_thread(_process_video)
+    try:
+        embeds, error_msg = await asyncio.to_thread(_process_video)
+    finally:
+        done_event.set()
+        reporter_task.cancel()
 
     if error_msg:
-        await interaction.followup.send(error_msg)
+        try:
+            await interaction.followup.send(error_msg)
+        except Exception:
+            pass
     elif embeds:
         for idx, emb in enumerate(embeds):
-            await interaction.followup.send(embed=emb)
+            try:
+                await interaction.followup.send(embed=emb)
+            except Exception as exc:
+                logger.error(f"發送 Embed 卡片失敗: {exc}")
+                # 備援：若 interaction token 過期，透過 channel 直接發送
+                if interaction.channel:
+                    await interaction.channel.send(embed=emb)
             if idx < len(embeds) - 1:
                 await asyncio.sleep(0.5)
+
+
+@tree.command(name="yt", description="輸入 YouTube 或 Apple Podcast 網址，由 Gemini 產出精華重點卡片")
+@app_commands.describe(
+    url="YouTube 影片或 Apple Podcast 單集網址"
+)
+async def cmd_yt(interaction: discord.Interaction, url: str):
+    await _handle_media_summary(interaction, url, force_qwen=False)
+
+
+@tree.command(name="ytq", description="輸入 YouTube 或 Apple Podcast 網址，由本機 Qwen 產出精華重點卡片")
+@app_commands.describe(
+    url="YouTube 影片或 Apple Podcast 單集網址"
+)
+async def cmd_ytq(interaction: discord.Interaction, url: str):
+    await _handle_media_summary(interaction, url, force_qwen=True)
+
+
+@tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    logger.error(f"斜線指令執行錯誤: {error}", exc_info=True)
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ 執行指令時發生未預期錯誤：{error}")
+        else:
+            await interaction.response.send_message(f"❌ 執行指令時發生未預期錯誤：{error}")
+    except Exception:
+        pass
 
 
 @client.event
@@ -434,11 +536,11 @@ async def on_ready():
     await client.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="台股行情 | /stock /chip /yt",
+            name="台股行情 | /stock /chip /yt /ytq",
         )
     )
     print(f"NotifyRobot Discord 機器人已上線！(使用者: {client.user})")
-    print("指令清單: /stock, /news, /alert, /alart, /chip, /resonance, /yt")
+    print("指令清單: /stock, /news, /alert, /alart, /chip, /resonance, /yt, /ytq")
 
 
 def start_discord_bot(token: Optional[str] = None):

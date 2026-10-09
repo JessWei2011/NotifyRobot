@@ -262,6 +262,7 @@ def main():
     parser.add_argument("--check-events", action="store_true", help="檢查自選股重大訊息、注意與處置事件")
     parser.add_argument("--morning-calendar", action="store_true", help="推送自選股開盤前行事曆")
     parser.add_argument("--big-holder-report", action="store_true", help="推送自選股集保大戶週報")
+    parser.add_argument("--poll-big-holder", action="store_true", help="配合台股行事曆智慧輪詢集保大戶資料（資料釋出即自動推播）")
     parser.add_argument("--test-discord", action="store_true", help="發送 Discord Webhook 連線測試")
     parser.add_argument("--heartbeat-discord", action="store_true", help="發送 Discord 主機心跳通知")
     parser.add_argument("--screener-only", action="store_true", help="只推送籌碼策略榜單（不推自選股）")
@@ -362,7 +363,39 @@ def main():
             return 1
         return 0
 
-    if args.big_holder_report:
+    if args.big_holder_report or args.poll_big_holder:
+        state = NotificationState(BASE_DIR / "data" / "notification_state.sqlite3")
+
+        # 若為輪詢模式，檢查今日是否符合台股行事曆的監聽條件
+        if args.poll_big_holder:
+            from src.calendar_utils import should_monitor_big_holders_today, get_last_trading_day_of_week
+            today_date = datetime.date.today()
+            if not should_monitor_big_holders_today(today_date):
+                logger.info("今日 (%s) 尚非本週集保監聽時段（本週最後交易日: %s），略過檢查", today_date, get_last_trading_day_of_week(today_date))
+                return 0
+
+            last_trading_date_str = get_last_trading_day_of_week(today_date).strftime("%Y%m%d")
+            # 1. 若本週最後交易日的週報已成功推送，直接靜默結束（本週任務已圓滿完成）
+            if state.was_sent(last_trading_date_str, "big_holders"):
+                logger.info("本週集保大戶資料 (%s) 已完成推播，無需重複輪詢", last_trading_date_str)
+                return 0
+
+            # 2. 檢查本機已有快照，若最新日期尚未更新則輪詢集保中心
+            snapshot_path = BASE_DIR / "data" / "big_holder_snapshot.json"
+            previous = load_previous_snapshot(snapshot_path)
+            prev_report_date = previous.get("date", "") if previous else ""
+            if prev_report_date and state.was_sent(prev_report_date, "big_holders"):
+                from src.big_holders import fetch_latest_tdcc_date
+                try:
+                    latest_tdcc_date = fetch_latest_tdcc_date()
+                    if not latest_tdcc_date or latest_tdcc_date <= prev_report_date:
+                        logger.info("集保中心資料日期仍為 %s，尚未更新最新一期，靜默退出", latest_tdcc_date or prev_report_date)
+                        return 0
+                    logger.info("🎉 偵測到集保中心釋出最新一期資料：%s！啟動大戶週報排程推播", latest_tdcc_date)
+                except Exception as exc:
+                    logger.warning("輪詢檢查集保中心最新日期失敗：%s", exc)
+                    return 0
+
         chat_id = os.getenv("TELEGRAM_CHAT_ID")
         notification_cfg = config.get("notification", {})
         if not notification_cfg.get("send_big_holder_report", True):
